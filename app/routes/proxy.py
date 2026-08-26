@@ -79,17 +79,7 @@ def proxy_hls(path, lang=None):
             if lang:
                 content = reorder_audio_tracks(content, lang)
 
-            content = re.sub(
-                r'URI="(/hls/[^"]+)"',
-                rf'URI="{base_url}\1"',
-                content
-            )
-            content = re.sub(
-                r'^(/hls/.+)$',
-                rf'{base_url}\1',
-                content,
-                flags=re.MULTILINE
-            )
+            content = _rewrite_m3u8_paths(content, base_url)
 
             response = Response(content, mimetype='application/vnd.apple.mpegurl')
             response.headers['Access-Control-Allow-Origin'] = '*'
@@ -104,6 +94,80 @@ def proxy_hls(path, lang=None):
             abort(502)
 
     abort(502)
+
+
+@proxy_bp.route('/m3/<path:path>')
+@proxy_bp.route('/<lang>/m3/<path:path>')
+def proxy_m3(path, lang=None):
+    for attempt in range(2):
+        base_url = get_zephyrix_base_url() if attempt == 0 else get_zephyrix_base_url(force=True)
+        query_string = request.query_string.decode('utf-8')
+        original_url = f"{base_url}/m3/{path}"
+        if query_string:
+            original_url += f"?{query_string}"
+
+        try:
+            headers = {
+                'User-Agent': get_random_agent(),
+                'Referer': f'{base_url}/'
+            }
+
+            resp = requests.get(original_url, headers=headers, timeout=30)
+
+            if resp.status_code in (403, 429, 502, 503) and attempt == 0:
+                invalidate_domain('zephyrix')
+                continue
+
+            resp.raise_for_status()
+
+            content = resp.text
+            content = _rewrite_m3u8_paths(content, base_url)
+
+            response = Response(content, mimetype='application/vnd.apple.mpegurl')
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = '*'
+            return response
+        except Exception as e:
+            if attempt == 0:
+                invalidate_domain('zephyrix')
+                continue
+            print(f"Error proxying M3: {e}")
+            abort(502)
+
+    abort(502)
+
+
+def _rewrite_m3u8_paths(content, base_url):
+    """Rewrite absolute paths in m3u8 to go through the proxy"""
+    host = Config.PROTOCOL + '://' + request.host
+
+    def replace_uri(match):
+        prefix = match.group(1)
+        path = match.group(2)
+        if path.startswith('http'):
+            return match.group(0)
+        if path.startswith('/m3/'):
+            return f'{prefix}{host}{path}'
+        if path.startswith('/hls/'):
+            return f'{prefix}{host}/cdn/hls{path[len("/hls"):]}'
+        return f'{prefix}{host}{path}'
+
+    content = re.sub(r'(URI=")(/[^"]+)"', replace_uri, content)
+
+    def replace_line(match):
+        path = match.group(1)
+        if path.startswith('http'):
+            return match.group(0)
+        if path.startswith('/m3/'):
+            return f'{host}{path}'
+        if path.startswith('/hls/'):
+            return f'{host}/cdn/hls{path[len("/hls"):]}'
+        return f'{host}{path}'
+
+    content = re.sub(r'^(/[^#\s].+)$', replace_line, content, flags=re.MULTILINE)
+
+    return content
 
 @proxy_bp.route('/subtitles/<subtitle_id>')
 def proxy_subtitle(subtitle_id):
