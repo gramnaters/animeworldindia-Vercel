@@ -142,32 +142,69 @@ def _rewrite_m3u8_paths(content, base_url):
     """Rewrite absolute paths in m3u8 to go through the proxy"""
     host = Config.PROTOCOL + '://' + request.host
 
+    def rewrite_url(url):
+        if url.startswith('http'):
+            encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip('=')
+            return f'{host}/proxy/segment/{encoded}'
+        if url.startswith('/m3/'):
+            return f'{host}{url}'
+        if url.startswith('/hls/'):
+            return f'{host}/cdn/hls{url[len("/hls"):]}'
+        return f'{host}{url}'
+
     def replace_uri(match):
         prefix = match.group(1)
         path = match.group(2)
-        if path.startswith('http'):
-            return match.group(0)
-        if path.startswith('/m3/'):
-            return f'{prefix}{host}{path}'
-        if path.startswith('/hls/'):
-            return f'{prefix}{host}/cdn/hls{path[len("/hls"):]}'
-        return f'{prefix}{host}{path}'
+        return f'{prefix}{rewrite_url(path)}'
 
-    content = re.sub(r'(URI=")(/[^"]+)"', replace_uri, content)
+    content = re.sub(r'(URI=")([^"]+)"', replace_uri, content)
 
     def replace_line(match):
         path = match.group(1)
-        if path.startswith('http'):
-            return match.group(0)
-        if path.startswith('/m3/'):
-            return f'{host}{path}'
-        if path.startswith('/hls/'):
-            return f'{host}/cdn/hls{path[len("/hls"):]}'
-        return f'{host}{path}'
+        return rewrite_url(path)
 
-    content = re.sub(r'^(/[^#\s].+)$', replace_line, content, flags=re.MULTILINE)
+    content = re.sub(r'^([^#\s][^\s]*)$', replace_line, content, flags=re.MULTILINE)
 
     return content
+
+
+@proxy_bp.route('/proxy/segment/<path:encoded>')
+@proxy_bp.route('/<lang>/proxy/segment/<path:encoded>')
+def proxy_segment(encoded):
+    try:
+        padded = encoded + '=' * (-len(encoded) % 4)
+        original_url = base64.urlsafe_b64decode(padded).decode('utf-8')
+    except Exception:
+        abort(400)
+
+    base_url = get_zephyrix_base_url()
+    headers = {
+        'User-Agent': get_random_agent(),
+        'Referer': f'{base_url}/'
+    }
+
+    try:
+        resp = requests.get(original_url, headers=headers, timeout=30, stream=True)
+        resp.raise_for_status()
+
+        ct = resp.headers.get('Content-Type', 'application/octet-stream')
+        cl = resp.headers.get('Content-Length')
+
+        def generate():
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    yield chunk
+
+        response = Response(generate(), status=resp.status_code, mimetype=ct)
+        if cl:
+            response.headers['Content-Length'] = cl
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = '*'
+        return response
+    except Exception as e:
+        print(f"Error proxying segment: {e}")
+        abort(502)
 
 @proxy_bp.route('/subtitles/<subtitle_id>')
 def proxy_subtitle(subtitle_id):
