@@ -96,6 +96,12 @@ def debug():
 
     try:
         from app.routes import wawin_client
+        base = wawin_client._base_url()
+        results['scraper_base'] = base
+        resp = wawin_client._get(base, timeout=15)
+        results['scraper_status'] = resp.status_code
+        results['scraper_len'] = len(resp.text)
+        results['scraper_html_snippet'] = resp.text[:500] if resp.status_code == 200 else resp.text[:300]
         drops = wawin_client.get_newest_drops()
         results['drops_count'] = len(drops)
         if drops:
