@@ -60,10 +60,15 @@ class WatchAnimeWorldAPI:
         user_agent = random.choice(_USER_AGENTS)
         self.session.headers['User-Agent'] = user_agent
 
+        params = kwargs.pop('params', None)
+        timeout = kwargs.pop('timeout', TIMEOUT)
+        if params:
+            url = f"{url}?{urlencode(params)}"
+
+        if Config.SCRAPE_API_URL:
+            return self._get_via_trawl(url, timeout)
+
         if Config.SCRAPER_PROXY_URL and Config.SCRAPER_PROXY_PASSWORD:
-            params = kwargs.pop('params', None)
-            if params:
-                url = f"{url}?{urlencode(params)}"
             proxy_url = (
                 f"{Config.SCRAPER_PROXY_URL}/proxy/stream"
                 f"?d={quote(url, safe='')}"
@@ -80,21 +85,51 @@ class WatchAnimeWorldAPI:
             return resp
 
         try:
-            resp = self.session.get(url, **kwargs)
+            resp = self.session.get(url, timeout=timeout, **kwargs)
         except requests.ConnectionError:
             invalidate_domain('watchanimeworld')
             new_base = get_watchanimeworld_base_url(force=True)
             new_url = url.replace(get_watchanimeworld_base_url(), new_base)
             if new_url != url:
-                return self.session.get(new_url, **kwargs)
+                return self.session.get(new_url, timeout=timeout, **kwargs)
             raise
         if resp.status_code in (403, 429, 502, 503):
             invalidate_domain('watchanimeworld')
             new_base = get_watchanimeworld_base_url(force=True)
             new_url = url.replace(get_watchanimeworld_base_url(), new_base)
             if new_url != url:
-                return self.session.get(new_url, **kwargs)
+                return self.session.get(new_url, timeout=timeout, **kwargs)
         return resp
+
+    def _get_via_trawl(self, url, timeout=TIMEOUT):
+        """Fetch a URL through Trawl's /scrape endpoint"""
+        try:
+            resp = requests.post(
+                f"{Config.SCRAPE_API_URL}/scrape",
+                json={"url": url},
+                timeout=timeout + 10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            html = data.get("html", "") or data.get("response", "") or ""
+
+            class TrawlResponse:
+                def __init__(self, text, status_code=200):
+                    self.text = text
+                    self.status_code = status_code
+                def raise_for_status(self):
+                    if self.status_code >= 400:
+                        raise requests.HTTPError(response=self)
+
+            return TrawlResponse(html, 200)
+        except Exception as e:
+            logging.error(f"Trawl scrape failed for {url}: {e}")
+            class EmptyResponse:
+                text = ""
+                status_code = 500
+                def raise_for_status(self):
+                    raise requests.HTTPError(response=self)
+            return EmptyResponse()
 
     def _parse_section(self, soup, section_title):
         """Parse a section from homepage by title"""

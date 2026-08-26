@@ -19,7 +19,10 @@ class Config:
     # TMDB API Key
     TMDB_API_KEY = os.getenv('TMDB_API_KEY', '')
     
-    # MediaFlow Proxy (for bypassing geo/IP blocks on scraping requests)
+    # Trawl scrape API (bypasses Cloudflare from Vercel IPs)
+    SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
+    
+    # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
     SCRAPER_PROXY_PASSWORD = os.getenv('SCRAPER_PROXY_PASSWORD', '')
     
