@@ -76,8 +76,51 @@ def callback():
     return redirect(url_for('index'))
 
 
+@app.route('/debug')
+def debug():
+    import traceback
+    results = {}
+    try:
+        results['tmdb_key'] = bool(Config.TMDB_API_KEY)
+        results['db_type'] = Config.DB_TYPE
+        results['protocol'] = Config.PROTOCOL
+    except Exception as e:
+        results['config_error'] = str(e)
+
+    try:
+        from app.resolver import get_watchanimeworld_base_url, get_zephyrix_base_url
+        results['ww_url'] = get_watchanimeworld_base_url()
+        results['zephyrix_url'] = get_zephyrix_base_url()
+    except Exception as e:
+        results['resolver_error'] = str(e)
+
+    try:
+        from app.routes import wawin_client
+        drops = wawin_client.get_newest_drops()
+        results['drops_count'] = len(drops)
+        if drops:
+            results['first_drop'] = drops[0]
+    except Exception as e:
+        results['wawin_error'] = traceback.format_exc()
+
+    try:
+        from app.mapper import get_or_create_imdb_mapping
+        slug = 'one-piece' if 'one-piece' in str(results.get('drops_count', '')) else None
+        if results.get('drops_count', 0) > 0:
+            first = results.get('first_drop', {})
+            slug = first.get('slug', '')
+            title = first.get('title', '')
+            ct = first.get('type', 'series')
+            poster = first.get('poster', '')
+            imdb = get_or_create_imdb_mapping(slug, title, ct, poster)
+            results['mapper_test'] = {'slug': slug, 'title': title, 'imdb': imdb}
+    except Exception as e:
+        results['mapper_error'] = traceback.format_exc()
+
+    import json
+    return json.dumps(results, indent=2, default=str)
+
+
 if __name__ == '__main__':
     # For development only - use gunicorn in production
     app.run(host='0.0.0.0', port=5000, debug=False)
-
-# redeploy
