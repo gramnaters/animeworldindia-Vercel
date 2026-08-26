@@ -8,6 +8,7 @@ from cachetools import TTLCache, cached
 import time
 import urllib3
 from config import Config
+from app.resolver import get_watchanimeworld_base_url, invalidate_domain
 
 # Suppress SSL warnings for proxy requests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -22,7 +23,6 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0",
 ]
 
-BASE_URL = "https://watchanimeworld.one"
 TIMEOUT = 15
 
 # TTL cache with 15 minutes expiration
@@ -45,7 +45,6 @@ class WatchAnimeWorldAPI:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         })
-        # Connection pooling
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=10,
             pool_maxsize=20,
@@ -54,17 +53,17 @@ class WatchAnimeWorldAPI:
         self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
 
+    def _base_url(self):
+        return get_watchanimeworld_base_url()
+
     def _get(self, url, **kwargs):
-        """GET with rotating User-Agent, optionally through MediaFlow proxy"""
         user_agent = random.choice(_USER_AGENTS)
         self.session.headers['User-Agent'] = user_agent
-        
+
         if Config.SCRAPER_PROXY_URL and Config.SCRAPER_PROXY_PASSWORD:
-            # Build full URL with params if provided
             params = kwargs.pop('params', None)
             if params:
                 url = f"{url}?{urlencode(params)}"
-            
             proxy_url = (
                 f"{Config.SCRAPER_PROXY_URL}/proxy/stream"
                 f"?d={quote(url, safe='')}"
@@ -72,9 +71,30 @@ class WatchAnimeWorldAPI:
                 f"&h_user-agent={quote(user_agent, safe='')}"
             )
             kwargs['verify'] = False
-            return self.session.get(proxy_url, **kwargs)
-        
-        return self.session.get(url, **kwargs)
+            resp = self.session.get(proxy_url, **kwargs)
+            if resp.status_code in (403, 429, 502, 503):
+                invalidate_domain('watchanimeworld')
+                new_base = get_watchanimeworld_base_url(force=True)
+                if url.startswith(new_base):
+                    return resp
+            return resp
+
+        try:
+            resp = self.session.get(url, **kwargs)
+        except requests.ConnectionError:
+            invalidate_domain('watchanimeworld')
+            new_base = get_watchanimeworld_base_url(force=True)
+            new_url = url.replace(get_watchanimeworld_base_url(), new_base)
+            if new_url != url:
+                return self.session.get(new_url, **kwargs)
+            raise
+        if resp.status_code in (403, 429, 502, 503):
+            invalidate_domain('watchanimeworld')
+            new_base = get_watchanimeworld_base_url(force=True)
+            new_url = url.replace(get_watchanimeworld_base_url(), new_base)
+            if new_url != url:
+                return self.session.get(new_url, **kwargs)
+        return resp
 
     def _parse_section(self, soup, section_title):
         """Parse a section from homepage by title"""
@@ -197,7 +217,7 @@ class WatchAnimeWorldAPI:
 
     def _get_season_episodes(self, post_id: str, season: int):
         """Get episodes for a specific season"""
-        url = f"{BASE_URL}/wp-admin/admin-ajax.php"
+        url = f"{self._base_url()}/wp-admin/admin-ajax.php"
         params = {
             'action': 'action_select_season',
             'season': season,
@@ -213,7 +233,7 @@ class WatchAnimeWorldAPI:
     def get_newest_drops(self):
         """Get Newest Drops section"""
         try:
-            resp = self._get(BASE_URL, timeout=TIMEOUT)
+            resp = self._get(self._base_url(), timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Newest Drops')
@@ -230,7 +250,7 @@ class WatchAnimeWorldAPI:
     def get_most_watched_shows(self):
         """Get Most-Watched Shows section"""
         try:
-            resp = self._get(BASE_URL, timeout=TIMEOUT)
+            resp = self._get(self._base_url(), timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Most-Watched Shows')
@@ -247,7 +267,7 @@ class WatchAnimeWorldAPI:
     def get_new_anime_arrivals(self):
         """Get New Anime Arrivals section"""
         try:
-            resp = self._get(BASE_URL, timeout=TIMEOUT)
+            resp = self._get(self._base_url(), timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'New Anime Arrivals')
@@ -264,7 +284,7 @@ class WatchAnimeWorldAPI:
     def get_most_watched_films(self):
         """Get Most-Watched Films section"""
         try:
-            resp = self._get(BASE_URL, timeout=TIMEOUT)
+            resp = self._get(self._base_url(), timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Most-Watched Films')
@@ -281,7 +301,7 @@ class WatchAnimeWorldAPI:
     def get_latest_anime_movies(self):
         """Get Latest Anime Movies section"""
         try:
-            resp = self._get(BASE_URL, timeout=TIMEOUT)
+            resp = self._get(self._base_url(), timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Latest Anime Movies')
@@ -299,7 +319,7 @@ class WatchAnimeWorldAPI:
     def search_anime(self, query: str):
         """Search for anime"""
         try:
-            url = f"{BASE_URL}/"
+            url = f"{self._base_url()}/"
             params = {'s': query}
             
             resp = self._get(url, params=params, timeout=TIMEOUT)
@@ -344,7 +364,7 @@ class WatchAnimeWorldAPI:
     def get_anime_details(self, slug: str):
         """Get anime details by slug"""
         for content_type in ['series', 'movies']:
-            url = f"{BASE_URL}/{content_type}/{slug}"
+            url = f"{self._base_url()}/{content_type}/{slug}"
             
             try:
                 resp = self._get(url, timeout=TIMEOUT)
@@ -412,9 +432,9 @@ class WatchAnimeWorldAPI:
         """Get stream URLs for an episode or movie"""
         # For movies, season and episode are None
         if season is not None and episode is not None:
-            url = f"{BASE_URL}/episode/{slug}-{season}x{episode}/"
+            url = f"{self._base_url()}/episode/{slug}-{season}x{episode}/"
         else:
-            url = f"{BASE_URL}/movies/{slug}"
+            url = f"{self._base_url()}/movies/{slug}"
         
         try:
             resp = self._get(url, timeout=TIMEOUT)
@@ -429,7 +449,7 @@ class WatchAnimeWorldAPI:
                 if 'zephyrix' in src.lower() or 'zephyrflick' in src.lower():
                     streams.append({
                         'player': 'zephyrflick',
-                        'url': src if src.startswith('http') else urljoin(BASE_URL, src)
+                        'url': src if src.startswith('http') else urljoin(self._base_url(), src)
                     })
             
             if streams:
