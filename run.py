@@ -76,6 +76,21 @@ def callback():
     return redirect(url_for('index'))
 
 
+@app.route('/__clean_failed')
+def clean_failed():
+    from app.database import db, FailedMapping
+    token = request.args.get('k', '')
+    if token != 'aWn-cln-7f3a':
+        return 'nope', 403
+    s = db.Session()
+    try:
+        n = s.query(FailedMapping).delete()
+        s.commit()
+        return f'cleared {n} failed mappings'
+    finally:
+        s.close()
+
+
 if __name__ == '__main__':
     # For development only - use gunicorn in production
     app.run(host='0.0.0.0', port=5000, debug=False)
