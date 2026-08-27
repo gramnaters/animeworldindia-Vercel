@@ -19,8 +19,9 @@ class Config:
     # TMDB API Key
     TMDB_API_KEY = os.getenv('TMDB_API_KEY', '')
     
-    # Trawl scrape API (bypasses Cloudflare from Vercel IPs)
-    SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
+    # Trawl scrape API (bypasses Cloudflare from Vercel IPs).
+    # Defaults to the project's free Cloudflare Worker relay; override via env if you host your own.
+    SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', 'https://awin-trawl-relay.gramnaters.workers.dev')
     
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
