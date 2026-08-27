@@ -105,9 +105,16 @@ def diag():
         slug = None
     if slug:
         try:
-            out['streams'] = wawin_client.get_episode_streams(slug, 1, 1)
+            url = f"{wawin_client._base_url()}/episode/{slug}-1x1/"
+            out['ep_url'] = url
+            resp = wawin_client._get(url, timeout=30)
+            out['status'] = resp.status_code
+            out['html_len'] = len(resp.text)
+            out['has_zephyrix'] = 'zephyrix' in resp.text.lower() or 'zephyrflick' in resp.text.lower()
+            out['has_cf'] = 'cf-chl' in resp.text or 'Just a moment' in resp.text
+            out['snippet'] = resp.text[:400]
         except Exception as e:
-            out['streams_error'] = repr(e)
+            out['get_error'] = repr(e)
     return out
 
 
