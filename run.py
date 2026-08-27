@@ -76,6 +76,25 @@ def callback():
     return redirect(url_for('index'))
 
 
+@app.route('/__t')
+def t():
+    from app.routes import wawin_client
+    from config import Config
+    slug = 'arifureta-from-commonplace-to-worlds-strongest'
+    url = f"{wawin_client._base_url()}/episode/{slug}-1x1/"
+    out = {'scrape_url': Config.SCRAPE_API_URL, 'ep_url': url}
+    try:
+        resp = wawin_client._get(url, timeout=40)
+        out['status'] = resp.status_code
+        out['html_len'] = len(resp.text)
+        out['has_zephyrix'] = 'zephyrix' in resp.text.lower() or 'zephyrflick' in resp.text.lower()
+        out['cf'] = 'Attention Required' in resp.text or 'Just a moment' in resp.text
+    except Exception as e:
+        out['error'] = repr(e)
+    return out
+
+
+
 if __name__ == '__main__':
     # For development only - use gunicorn in production
     app.run(host='0.0.0.0', port=5000, debug=False)
