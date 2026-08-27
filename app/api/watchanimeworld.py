@@ -105,16 +105,23 @@ class WatchAnimeWorldAPI:
         return self.session.get(url, timeout=timeout, **kwargs)
 
     def _get_via_trawl(self, url, timeout=TIMEOUT):
-        """Fetch a URL through Trawl's /scrape endpoint"""
+        """Fetch a URL through Trawl's /scrape endpoint (or a compatible relay)"""
         try:
+            base = Config.SCRAPE_API_URL.rstrip('/')
             resp = requests.post(
-                f"{Config.SCRAPE_API_URL}/scrape",
-                json={"url": url},
+                f"{base}/scrape",
+                json={"url": url, "maxTimeout": (timeout + 10) * 1000},
                 timeout=timeout + 10,
             )
             resp.raise_for_status()
             data = resp.json()
-            html = data.get("html", "") or data.get("response", "") or ""
+            html = (
+                data.get("html")
+                or data.get("response")
+                or (data.get("solution") or {}).get("response")
+                or (data.get("solution") or {}).get("html")
+                or ""
+            )
 
             class TrawlResponse:
                 def __init__(self, text, status_code=200):
