@@ -91,6 +91,26 @@ def clean_failed():
         s.close()
 
 
+@app.route('/__diag')
+def diag():
+    from app.mapper import get_or_create_slug_mapping
+    from app.routes import wawin_client
+    imdb = request.args.get('imdb', 'tt10431290')
+    out = {}
+    try:
+        slug = get_or_create_slug_mapping(imdb)
+        out['slug'] = slug
+    except Exception as e:
+        out['slug_error'] = repr(e)
+        slug = None
+    if slug:
+        try:
+            out['streams'] = wawin_client.get_episode_streams(slug, 1, 1)
+        except Exception as e:
+            out['streams_error'] = repr(e)
+    return out
+
+
 if __name__ == '__main__':
     # For development only - use gunicorn in production
     app.run(host='0.0.0.0', port=5000, debug=False)
