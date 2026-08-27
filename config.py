@@ -21,7 +21,8 @@ class Config:
     
     # Trawl scrape API (bypasses Cloudflare from Vercel IPs).
     # Defaults to the project's free Cloudflare Worker relay; override via env if you host your own.
-    SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', 'https://awin-trawl-relay.gramnaters.workers.dev')
+    _scrape = os.getenv('SCRAPE_API_URL', '')
+    SCRAPE_API_URL = _scrape if _scrape else 'https://awin-trawl-relay.gramnaters.workers.dev'
     
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
