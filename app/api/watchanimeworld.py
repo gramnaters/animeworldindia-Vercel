@@ -526,8 +526,7 @@ class WatchAnimeWorldAPI:
                 streams_cache[cache_key] = {'streams': streams}
                 return {'streams': streams}
             else:
-                # Cache empty responses briefly to avoid hammering the bypass
-                streams_cache[cache_key] = {'streams': []}
+                # Do NOT cache empty results — let the bypass retry on the next request
                 return {'streams': []}
         except:
             pass
