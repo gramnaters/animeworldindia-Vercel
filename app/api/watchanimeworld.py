@@ -56,6 +56,28 @@ class WatchAnimeWorldAPI:
     def _base_url(self):
         return get_watchanimeworld_base_url()
 
+    @staticmethod
+    def _is_blocked(resp):
+        """Detect Cloudflare / anti-bot challenge pages so we fall through to a bypass."""
+        try:
+            text = resp.text
+        except Exception:
+            return True
+        if resp.status_code != 200:
+            return True
+        low = text.lower()
+        markers = (
+            'cf-chl', 'just a moment', 'attention required', 'challenge-platform',
+            'cf-ray', 'why_captcha', 'verify you are human', 'checking your browser',
+            'enable javascript and cookies to continue',
+        )
+        if any(m in low for m in markers):
+            return True
+        # Short page that names Cloudflare is almost always a challenge/interstitial
+        if 'cloudflare' in low and len(text) < 30000:
+            return True
+        return False
+
     def _get(self, url, **kwargs):
         user_agent = random.choice(_USER_AGENTS)
         self.session.headers['User-Agent'] = user_agent
@@ -68,7 +90,7 @@ class WatchAnimeWorldAPI:
         # 1. Try direct fetch first (fast, "like before", no solver)
         try:
             resp = self.session.get(url, timeout=timeout, **kwargs)
-            if resp.status_code == 200 and 'cf-chl' not in resp.text and 'Just a moment' not in resp.text:
+            if not self._is_blocked(resp):
                 return resp
             if resp.status_code in (403, 429, 502, 503):
                 invalidate_domain('watchanimeworld')
@@ -76,7 +98,7 @@ class WatchAnimeWorldAPI:
                 new_url = url.replace(get_watchanimeworld_base_url(), new_base)
                 if new_url != url:
                     resp = self.session.get(new_url, timeout=timeout, **kwargs)
-                    if resp.status_code == 200 and 'cf-chl' not in resp.text and 'Just a moment' not in resp.text:
+                    if not self._is_blocked(resp):
                         return resp
         except requests.RequestException:
             pass
@@ -92,7 +114,7 @@ class WatchAnimeWorldAPI:
             kwargs['verify'] = False
             try:
                 resp = self.session.get(proxy_url, **kwargs)
-                if resp.status_code == 200:
+                if not self._is_blocked(resp):
                     return resp
             except requests.RequestException:
                 pass
