@@ -65,9 +65,23 @@ class WatchAnimeWorldAPI:
         if params:
             url = f"{url}?{urlencode(params)}"
 
-        if Config.SCRAPE_API_URL:
-            return self._get_via_trawl(url, timeout)
+        # 1. Try direct fetch first (fast, "like before", no solver)
+        try:
+            resp = self.session.get(url, timeout=timeout, **kwargs)
+            if resp.status_code == 200 and 'cf-chl' not in resp.text and 'Just a moment' not in resp.text:
+                return resp
+            if resp.status_code in (403, 429, 502, 503):
+                invalidate_domain('watchanimeworld')
+                new_base = get_watchanimeworld_base_url(force=True)
+                new_url = url.replace(get_watchanimeworld_base_url(), new_base)
+                if new_url != url:
+                    resp = self.session.get(new_url, timeout=timeout, **kwargs)
+                    if resp.status_code == 200 and 'cf-chl' not in resp.text and 'Just a moment' not in resp.text:
+                        return resp
+        except requests.RequestException:
+            pass
 
+        # 2. Try MediaFlow proxy if configured
         if Config.SCRAPER_PROXY_URL and Config.SCRAPER_PROXY_PASSWORD:
             proxy_url = (
                 f"{Config.SCRAPER_PROXY_URL}/proxy/stream"
@@ -76,30 +90,19 @@ class WatchAnimeWorldAPI:
                 f"&h_user-agent={quote(user_agent, safe='')}"
             )
             kwargs['verify'] = False
-            resp = self.session.get(proxy_url, **kwargs)
-            if resp.status_code in (403, 429, 502, 503):
-                invalidate_domain('watchanimeworld')
-                new_base = get_watchanimeworld_base_url(force=True)
-                if url.startswith(new_base):
+            try:
+                resp = self.session.get(proxy_url, **kwargs)
+                if resp.status_code == 200:
                     return resp
-            return resp
+            except requests.RequestException:
+                pass
 
-        try:
-            resp = self.session.get(url, timeout=timeout, **kwargs)
-        except requests.ConnectionError:
-            invalidate_domain('watchanimeworld')
-            new_base = get_watchanimeworld_base_url(force=True)
-            new_url = url.replace(get_watchanimeworld_base_url(), new_base)
-            if new_url != url:
-                return self.session.get(new_url, timeout=timeout, **kwargs)
-            raise
-        if resp.status_code in (403, 429, 502, 503):
-            invalidate_domain('watchanimeworld')
-            new_base = get_watchanimeworld_base_url(force=True)
-            new_url = url.replace(get_watchanimeworld_base_url(), new_base)
-            if new_url != url:
-                return self.session.get(new_url, timeout=timeout, **kwargs)
-        return resp
+        # 3. Fall back to Trawl solver only as a last resort
+        if Config.SCRAPE_API_URL:
+            return self._get_via_trawl(url, timeout)
+
+        # Last resort: direct (may raise)
+        return self.session.get(url, timeout=timeout, **kwargs)
 
     def _get_via_trawl(self, url, timeout=TIMEOUT):
         """Fetch a URL through Trawl's /scrape endpoint"""
