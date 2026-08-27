@@ -76,42 +76,6 @@ def callback():
     return redirect(url_for('index'))
 
 
-@app.route('/__clean_failed')
-def clean_failed():
-    from app.database import db, FailedMapping
-    token = request.args.get('k', '')
-    if token != 'aWn-cln-7f3a':
-        return 'nope', 403
-    s = db.Session()
-    try:
-        n = s.query(FailedMapping).delete()
-        s.commit()
-        return f'cleared {n} failed mappings'
-    finally:
-        s.close()
-
-
-@app.route('/__diag')
-def diag():
-    from app.mapper import get_or_create_slug_mapping
-    from config import Config
-    imdb = request.args.get('imdb', 'tt10431290')
-    out = {}
-    try:
-        slug = get_or_create_slug_mapping(imdb)
-        out['slug'] = slug
-    except Exception as e:
-        out['slug_error'] = repr(e)
-    out['cfg_trawl'] = bool(Config.SCRAPE_API_URL)
-    out['cfg_proxy'] = bool(Config.SCRAPER_PROXY_URL)
-    try:
-        out['trawl_host'] = (Config.SCRAPE_API_URL or '').split('/')[2] if Config.SCRAPE_API_URL else None
-        out['proxy_host'] = (Config.SCRAPER_PROXY_URL or '').split('/')[2] if Config.SCRAPER_PROXY_URL else None
-    except Exception as e:
-        out['cfg_err'] = repr(e)
-    return out
-
-
 if __name__ == '__main__':
     # For development only - use gunicorn in production
     app.run(host='0.0.0.0', port=5000, debug=False)
