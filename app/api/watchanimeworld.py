@@ -494,7 +494,6 @@ class WatchAnimeWorldAPI:
                 continue
         
         return None
-
     def get_episode_streams(self, slug: str, season: int = None, episode: int = None):
         """Get stream URLs for an episode or movie"""
         # For movies, season and episode are None
@@ -502,15 +501,19 @@ class WatchAnimeWorldAPI:
             url = f"{self._base_url()}/episode/{slug}-{season}x{episode}/"
         else:
             url = f"{self._base_url()}/movies/{slug}"
-        
+
+        cache_key = f"{slug}_{season}_{episode}"
+        if cache_key in streams_cache:
+            return streams_cache[cache_key]
+
         try:
             resp = self._get(url, timeout=TIMEOUT)
             resp.raise_for_status()
-            
+
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
+
             streams = []
-            
+
             for iframe in soup.find_all('iframe'):
                 src = iframe.get('src', '') or iframe.get('data-src', '')
                 if 'zephyrix' in src.lower() or 'zephyrflick' in src.lower():
@@ -518,15 +521,15 @@ class WatchAnimeWorldAPI:
                         'player': 'zephyrflick',
                         'url': src if src.startswith('http') else urljoin(self._base_url(), src)
                     })
-            
+
             if streams:
+                streams_cache[cache_key] = {'streams': streams}
                 return {'streams': streams}
             else:
-                # Cache tylko puste odpowiedzi (brak streamów)
-                cache_key = f"{slug}_{season}_{episode}"
+                # Cache empty responses briefly to avoid hammering the bypass
                 streams_cache[cache_key] = {'streams': []}
                 return {'streams': []}
         except:
             pass
-        
+
         return {'streams': []}
