@@ -94,7 +94,7 @@ def clean_failed():
 @app.route('/__diag')
 def diag():
     from app.mapper import get_or_create_slug_mapping
-    from app.routes import wawin_client
+    from config import Config
     imdb = request.args.get('imdb', 'tt10431290')
     out = {}
     try:
@@ -102,25 +102,14 @@ def diag():
         out['slug'] = slug
     except Exception as e:
         out['slug_error'] = repr(e)
-        slug = None
-        if slug:
-            try:
-                url = f"{wawin_client._base_url()}/episode/{slug}-1x1/"
-                out['ep_url'] = url
-                resp = wawin_client._get(url, timeout=30)
-                out['status'] = resp.status_code
-                out['html_len'] = len(resp.text)
-                out['has_zephyrix'] = 'zephyrix' in resp.text.lower() or 'zephyrflick' in resp.text.lower()
-                out['has_cf'] = 'cf-chl' in resp.text or 'Just a moment' in resp.text or 'Attention Required' in resp.text
-                out['snippet'] = resp.text[:400]
-            except Exception as e:
-                out['get_error'] = repr(e)
-        from config import Config
-        out['cfg_trawl'] = bool(Config.SCRAPE_API_URL)
-        out['cfg_proxy'] = bool(Config.SCRAPER_PROXY_URL)
+    out['cfg_trawl'] = bool(Config.SCRAPE_API_URL)
+    out['cfg_proxy'] = bool(Config.SCRAPER_PROXY_URL)
+    try:
         out['trawl_host'] = (Config.SCRAPE_API_URL or '').split('/')[2] if Config.SCRAPE_API_URL else None
         out['proxy_host'] = (Config.SCRAPER_PROXY_URL or '').split('/')[2] if Config.SCRAPER_PROXY_URL else None
-        return out
+    except Exception as e:
+        out['cfg_err'] = repr(e)
+    return out
 
 
 if __name__ == '__main__':
