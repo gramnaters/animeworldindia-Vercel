@@ -76,6 +76,25 @@ def callback():
     return redirect(url_for('index'))
 
 
+@app.route('/__d')
+def d():
+    import requests
+    from config import Config
+    ep = "https://watchanimeworld.one/episode/arifureta-from-commonplace-to-worlds-strongest-1x1/"
+    out = {'scrape_url': Config.SCRAPE_API_URL}
+    try:
+        r = requests.post(Config.SCRAPE_API_URL.rstrip('/') + '/scrape', json={'url': ep}, timeout=30)
+        out['worker_status'] = r.status_code
+        j = r.json()
+        h = j.get('html', '')
+        out['worker_html_len'] = len(h)
+        out['worker_zeph'] = 'zephyrix' in h.lower() or 'zephyrflick' in h.lower()
+        out['worker_cf'] = 'Attention Required' in h or 'Just a moment' in h
+    except Exception as e:
+        out['worker_err'] = repr(e)
+    return out
+
+
 
 if __name__ == '__main__':
     # For development only - use gunicorn in production
