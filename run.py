@@ -28,34 +28,37 @@ logging.basicConfig(format='%(asctime)s %(message)s')
 @app.route('/configure')
 @app.route('/<lang>/configure')
 def index(lang=None):
+    """
+    Render the index page
+    """
     from app.routes.manifest import MANIFEST
     import hashlib
-
-    import os
-    host = os.getenv('REDIRECT_URL') or request.headers.get('X-Forwarded-Host', request.host)
+    
     if lang:
-        manifest_url = f'https://{host}/{lang}/manifest.json'
-        manifest_magnet = f'stremio://{host}/{lang}/manifest.json'
+        manifest_url = f'{Config.PROTOCOL}://{Config.REDIRECT_URL}/{lang}/manifest.json'
+        manifest_magnet = f'stremio://{Config.REDIRECT_URL}/{lang}/manifest.json'
     else:
-        manifest_url = f'https://{host}/manifest.json'
-        manifest_magnet = f'stremio://{host}/manifest.json'
-
+        manifest_url = f'{Config.PROTOCOL}://{Config.REDIRECT_URL}/manifest.json'
+        manifest_magnet = f'stremio://{Config.REDIRECT_URL}/manifest.json'
+    
     html = render_template('index.html',
-                          manifest_url=manifest_url,
+                          manifest_url=manifest_url, 
                           manifest_magnet=manifest_magnet,
                           version=MANIFEST['version'],
                           lang=lang)
-
+    
     response = make_response(html)
-
+    
+    # Generate ETag based on version for 304 support
     etag = hashlib.md5(MANIFEST['version'].encode()).hexdigest()
     response.set_etag(etag)
-    response.cache_control.max_age = 3600
+    response.cache_control.max_age = 3600  # 1 hour
     response.cache_control.public = True
-
+    
+    # Check if client sent If-None-Match header
     if request.headers.get('If-None-Match') == etag:
         return make_response('', 304)
-
+    
     return response
 
 
@@ -74,7 +77,6 @@ def callback():
     :return: A webpage response with the manifest URL and Magnet URL
     """
     return redirect(url_for('index'))
-
 
 
 if __name__ == '__main__':

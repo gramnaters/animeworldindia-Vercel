@@ -8,7 +8,6 @@ from cachetools import TTLCache, cached
 import time
 import urllib3
 from config import Config
-from app.resolver import get_watchanimeworld_base_url, invalidate_domain
 
 # Suppress SSL warnings for proxy requests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -23,13 +22,14 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0",
 ]
 
+BASE_URL = "https://watchanimeworld.one"  # .net redirects here (domain moved)
 TIMEOUT = 15
 
 # TTL cache with 15 minutes expiration
 catalog_cache = TTLCache(maxsize=128, ttl=900)
 search_cache = TTLCache(maxsize=256, ttl=900)
 details_cache = TTLCache(maxsize=512, ttl=1800)
-streams_cache = TTLCache(maxsize=256, ttl=7200)  # 2h: Trawl only scrapes once per episode per 2h
+streams_cache = TTLCache(maxsize=256, ttl=600)
 
 class WatchAnimeWorldAPI:
     """
@@ -45,6 +45,7 @@ class WatchAnimeWorldAPI:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         })
+        # Connection pooling
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=10,
             pool_maxsize=20,
@@ -53,58 +54,17 @@ class WatchAnimeWorldAPI:
         self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
 
-    def _base_url(self):
-        return get_watchanimeworld_base_url()
-
-    @staticmethod
-    def _is_blocked(resp):
-        """Detect Cloudflare / anti-bot challenge pages so we fall through to a bypass."""
-        try:
-            text = resp.text
-        except Exception:
-            return True
-        if resp.status_code != 200:
-            return True
-        low = text.lower()
-        markers = (
-            'cf-chl', 'just a moment', 'attention required', 'challenge-platform',
-            'cf-ray', 'why_captcha', 'verify you are human', 'checking your browser',
-            'enable javascript and cookies to continue',
-        )
-        if any(m in low for m in markers):
-            return True
-        # Short page that names Cloudflare is almost always a challenge/interstitial
-        if 'cloudflare' in low and len(text) < 30000:
-            return True
-        return False
-
     def _get(self, url, **kwargs):
+        """GET/POST with rotating User-Agent, optionally through MediaFlow proxy"""
         user_agent = random.choice(_USER_AGENTS)
         self.session.headers['User-Agent'] = user_agent
-
-        params = kwargs.pop('params', None)
-        timeout = kwargs.pop('timeout', TIMEOUT)
-        if params:
-            url = f"{url}?{urlencode(params)}"
-
-        # 1. Try direct fetch first (fast, "like before", no solver)
-        try:
-            resp = self.session.get(url, timeout=timeout, **kwargs)
-            if not self._is_blocked(resp):
-                return resp
-            if resp.status_code in (403, 429, 502, 503):
-                invalidate_domain('watchanimeworld')
-                new_base = get_watchanimeworld_base_url(force=True)
-                new_url = url.replace(get_watchanimeworld_base_url(), new_base)
-                if new_url != url:
-                    resp = self.session.get(new_url, timeout=timeout, **kwargs)
-                    if not self._is_blocked(resp):
-                        return resp
-        except requests.RequestException:
-            pass
-
-        # 2. Try MediaFlow proxy if configured
+        
         if Config.SCRAPER_PROXY_URL and Config.SCRAPER_PROXY_PASSWORD:
+            # Build full URL with params if provided
+            params = kwargs.pop('params', None)
+            if params:
+                url = f"{url}?{urlencode(params)}"
+            
             proxy_url = (
                 f"{Config.SCRAPER_PROXY_URL}/proxy/stream"
                 f"?d={quote(url, safe='')}"
@@ -112,56 +72,11 @@ class WatchAnimeWorldAPI:
                 f"&h_user-agent={quote(user_agent, safe='')}"
             )
             kwargs['verify'] = False
-            try:
-                resp = self.session.get(proxy_url, **kwargs)
-                if not self._is_blocked(resp):
-                    return resp
-            except requests.RequestException:
-                pass
-
-        # 3. Fall back to Trawl solver only as a last resort
-        if Config.SCRAPE_API_URL:
-            return self._get_via_trawl(url, timeout)
-
-        # Last resort: direct (may raise)
-        return self.session.get(url, timeout=timeout, **kwargs)
-
-    def _get_via_trawl(self, url, timeout=TIMEOUT):
-        """Fetch a URL through Trawl's /scrape endpoint (or a compatible relay)"""
-        try:
-            base = Config.SCRAPE_API_URL.rstrip('/')
-            resp = requests.post(
-                f"{base}/scrape",
-                json={"url": url, "maxTimeout": (timeout + 10) * 1000},
-                timeout=timeout + 10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            html = (
-                data.get("html")
-                or data.get("response")
-                or (data.get("solution") or {}).get("response")
-                or (data.get("solution") or {}).get("html")
-                or ""
-            )
-
-            class TrawlResponse:
-                def __init__(self, text, status_code=200):
-                    self.text = text
-                    self.status_code = status_code
-                def raise_for_status(self):
-                    if self.status_code >= 400:
-                        raise requests.HTTPError(response=self)
-
-            return TrawlResponse(html, 200)
-        except Exception as e:
-            logging.error(f"Trawl scrape failed for {url}: {e}")
-            class EmptyResponse:
-                text = ""
-                status_code = 500
-                def raise_for_status(self):
-                    raise requests.HTTPError(response=self)
-            return EmptyResponse()
+            return self.session.get(proxy_url, **kwargs)
+        
+        if kwargs.pop('method', 'GET').upper() == 'POST':
+            return self.session.post(url, **kwargs)
+        return self.session.get(url, **kwargs)
 
     def _parse_section(self, soup, section_title):
         """Parse a section from homepage by title"""
@@ -284,7 +199,7 @@ class WatchAnimeWorldAPI:
 
     def _get_season_episodes(self, post_id: str, season: int):
         """Get episodes for a specific season"""
-        url = f"{self._base_url()}/wp-admin/admin-ajax.php"
+        url = f"{BASE_URL}/wp-admin/admin-ajax.php"
         params = {
             'action': 'action_select_season',
             'season': season,
@@ -300,7 +215,7 @@ class WatchAnimeWorldAPI:
     def get_newest_drops(self):
         """Get Newest Drops section"""
         try:
-            resp = self._get(self._base_url(), timeout=TIMEOUT)
+            resp = self._get(BASE_URL, timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Newest Drops')
@@ -317,7 +232,7 @@ class WatchAnimeWorldAPI:
     def get_most_watched_shows(self):
         """Get Most-Watched Shows section"""
         try:
-            resp = self._get(self._base_url(), timeout=TIMEOUT)
+            resp = self._get(BASE_URL, timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Most-Watched Shows')
@@ -334,7 +249,7 @@ class WatchAnimeWorldAPI:
     def get_new_anime_arrivals(self):
         """Get New Anime Arrivals section"""
         try:
-            resp = self._get(self._base_url(), timeout=TIMEOUT)
+            resp = self._get(BASE_URL, timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'New Anime Arrivals')
@@ -351,7 +266,7 @@ class WatchAnimeWorldAPI:
     def get_most_watched_films(self):
         """Get Most-Watched Films section"""
         try:
-            resp = self._get(self._base_url(), timeout=TIMEOUT)
+            resp = self._get(BASE_URL, timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Most-Watched Films')
@@ -368,7 +283,7 @@ class WatchAnimeWorldAPI:
     def get_latest_anime_movies(self):
         """Get Latest Anime Movies section"""
         try:
-            resp = self._get(self._base_url(), timeout=TIMEOUT)
+            resp = self._get(BASE_URL, timeout=TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             results = self._parse_section(soup, 'Latest Anime Movies')
@@ -384,45 +299,37 @@ class WatchAnimeWorldAPI:
 
     @cached(search_cache)
     def search_anime(self, query: str):
-        """Search for anime"""
+        """Search for anime via the theme's live-search AJAX endpoint.
+        The server-rendered /?s= page no longer contains results (loads empty #aa-movies),
+        but action_tr_search_suggest returns real entries when called with a page nonce."""
         try:
-            url = f"{self._base_url()}/"
-            params = {'s': query}
-            
-            resp = self._get(url, params=params, timeout=TIMEOUT)
+            # Fetch homepage to obtain a valid AJAX nonce (bound to session cookies)
+            home = self._get(BASE_URL, timeout=TIMEOUT)
+            nonce_match = re.search(r'"nonce":"([a-f0-9]+)"', home.text)
+            if not nonce_match:
+                logging.error("search_anime: could not extract AJAX nonce")
+                return []
+            nonce = nonce_match.group(1)
+
+            url = f"{BASE_URL}/wp-admin/admin-ajax.php"
+            resp = self._get(url, timeout=TIMEOUT, method='POST',
+                             data={'action': 'action_tr_search_suggest',
+                                   'nonce': nonce, 'term': query})
             resp.raise_for_status()
-            
-            soup = BeautifulSoup(resp.text, 'html.parser')
+
             results = []
-            
-            # Search results are in #aa-movies section
-            search_section = soup.select_one('#aa-movies')
-            if search_section:
-                for li in search_section.select('ul.post-lst > li'):
-                    article = li.find('article')
-                    if not article:
-                        continue
-                    
-                    link = article.find('a', class_='lnk-blk')
-                    img = article.find('img')
-                    title = article.find('h2', class_='entry-title')
-                    
-                    if link and title:
-                        href = link.get('href', '')
-                        slug = href.rstrip('/').split('/')[-1]
-                        content_type = 'movie' if '/movies/' in href else 'series'
-                        
-                        results.append({
-                            'title': title.text.strip(),
-                            'slug': slug,
-                            'poster': img.get('src', '').replace('//', 'https://') if img else None,
-                            'type': content_type
-                        })
-            
+            # Entries look like: <a href="https://.../series/slug/"><span class="type-series">series</span>Title</a>
+            for _prefix, slug, wptype, title in re.findall(
+                    r'<a href="([^"]+)/(?:series|movies)/([^"]+)/"><span[^>]*>([^<]+)</span>([^<]+)<',
+                    resp.text):
+                content_type = 'movie' if wptype == 'movies' else 'series'
+                results.append({
+                    'title': title.strip(),
+                    'slug': slug,
+                    'poster': None,
+                    'type': content_type
+                })
             return results
-        except RecursionError:
-            logging.error(f"RecursionError in search_anime for query: {query}")
-            return []
         except Exception as e:
             logging.error(f"Error in search_anime: {e}")
             return []
@@ -431,7 +338,7 @@ class WatchAnimeWorldAPI:
     def get_anime_details(self, slug: str):
         """Get anime details by slug"""
         for content_type in ['series', 'movies']:
-            url = f"{self._base_url()}/{content_type}/{slug}"
+            url = f"{BASE_URL}/{content_type}/{slug}"
             
             try:
                 resp = self._get(url, timeout=TIMEOUT)
@@ -494,41 +401,39 @@ class WatchAnimeWorldAPI:
                 continue
         
         return None
+
     def get_episode_streams(self, slug: str, season: int = None, episode: int = None):
         """Get stream URLs for an episode or movie"""
         # For movies, season and episode are None
         if season is not None and episode is not None:
-            url = f"{self._base_url()}/episode/{slug}-{season}x{episode}/"
+            url = f"{BASE_URL}/episode/{slug}-{season}x{episode}/"
         else:
-            url = f"{self._base_url()}/movies/{slug}"
-
-        cache_key = f"{slug}_{season}_{episode}"
-        if cache_key in streams_cache:
-            return streams_cache[cache_key]
-
+            url = f"{BASE_URL}/movies/{slug}"
+        
         try:
             resp = self._get(url, timeout=TIMEOUT)
             resp.raise_for_status()
-
+            
             soup = BeautifulSoup(resp.text, 'html.parser')
-
+            
             streams = []
-
+            
             for iframe in soup.find_all('iframe'):
                 src = iframe.get('src', '') or iframe.get('data-src', '')
-                if 'zephyrix' in src.lower() or 'zephyrflick' in src.lower():
+                if 'zephyr' in src.lower():  # matches zephyrflick + new zephyrix host
                     streams.append({
                         'player': 'zephyrflick',
-                        'url': src if src.startswith('http') else urljoin(self._base_url(), src)
+                        'url': src if src.startswith('http') else urljoin(BASE_URL, src)
                     })
-
+            
             if streams:
-                streams_cache[cache_key] = {'streams': streams}
                 return {'streams': streams}
             else:
-                # Do NOT cache empty results — let the bypass retry on the next request
+                # Cache tylko puste odpowiedzi (brak streamów)
+                cache_key = f"{slug}_{season}_{episode}"
+                streams_cache[cache_key] = {'streams': []}
                 return {'streams': []}
         except:
             pass
-
+        
         return {'streams': []}
