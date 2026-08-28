@@ -29,7 +29,7 @@ TIMEOUT = 15
 catalog_cache = TTLCache(maxsize=128, ttl=900)
 search_cache = TTLCache(maxsize=256, ttl=900)
 details_cache = TTLCache(maxsize=512, ttl=1800)
-streams_cache = TTLCache(maxsize=256, ttl=600)
+streams_cache = TTLCache(maxsize=256, ttl=7200)  # 2h: Trawl only scrapes once per episode per 2h
 
 class WatchAnimeWorldAPI:
     """
