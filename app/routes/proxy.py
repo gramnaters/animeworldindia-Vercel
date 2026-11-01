@@ -110,6 +110,47 @@ def proxy_hls(path, lang=None):
     abort(502)
 
 
+@proxy_bp.route('/hls.m3u8')
+@proxy_bp.route('/<lang>/hls.m3u8')
+def proxy_master_m3u8(lang=None):
+    """Serve the upstream master playlist at a URL ending in .m3u8.
+
+    mpv/ffmpeg will not reliably auto-detect HLS from the upstream
+    ``.../master.txt`` (served as text/plain, and its probe window is full of
+    long #EXT-X-MEDIA URIs). Ending the URL in .m3u8 makes detection reliable.
+    Variants are proxied back through here; segments stay absolute (direct CDN).
+    """
+    original_url = request.args.get('u', '')
+    if not original_url:
+        abort(400)
+
+    base_url = get_zephyrix_base_url()
+    try:
+        raw = playlist_cache.get(original_url)
+        if raw is None:
+            resp = _cdn_session.get(
+                original_url,
+                headers={'User-Agent': get_random_agent(), 'Referer': f'{base_url}/'},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            raw = resp.text
+            playlist_cache[original_url] = raw
+
+        if lang:
+            raw = reorder_audio_tracks(raw, lang)
+
+        content = _rewrite_m3u8_paths(raw, base_url)
+        response = Response(content, mimetype='application/vnd.apple.mpegurl')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = '*'
+        return response
+    except Exception as e:
+        print(f"Error proxying master m3u8: {e}")
+        abort(502)
+
+
 @proxy_bp.route('/m3/<path:path>')
 @proxy_bp.route('/<lang>/m3/<path:path>')
 def proxy_m3(path, lang=None):

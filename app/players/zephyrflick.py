@@ -1,6 +1,7 @@
 import re
 import base64
 import requests
+from urllib.parse import quote
 from cachetools import TTLCache
 from app.routes.utils import get_random_agent
 from config import Config
@@ -66,11 +67,12 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             # proxyHeaders below). This is instant + zero addon bandwidth.
             # STREAM_MODE=proxy restores the old relay-through-addon behaviour.
             if stream_mode == 'proxy':
+                # Serve the master at a .m3u8 URL (mpv/ffmpeg need the extension
+                # to auto-detect HLS). Variants come back through this addon,
+                # segments stay absolute -> direct from the CDN.
                 proto = Config.PROTOCOL
-                if preferred_lang:
-                    video_url = video_url.replace(base_url, f'{proto}://{host}/{preferred_lang}')
-                else:
-                    video_url = video_url.replace(base_url, f'{proto}://{host}')
+                prefix = f'{proto}://{host}' + (f'/{preferred_lang}' if preferred_lang else '')
+                video_url = f'{prefix}/hls.m3u8?u={quote(video_url, safe="")}'
 
             # The CDN (s11.zn-grid*.top) and the master/variant playlists require
             # the player Referer (and a browser UA), otherwise segments return 403.
