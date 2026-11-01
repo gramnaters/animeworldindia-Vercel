@@ -25,6 +25,20 @@ _USER_AGENTS = [
 
 TIMEOUT = 15
 
+
+class _TextResponse:
+    """Minimal response-like object for solver/relay results."""
+
+    def __init__(self, text, status_code=200):
+        self.text = text
+        self.content = text.encode('utf-8', 'ignore') if isinstance(text, str) else text
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+
 # TTL cache with 15 minutes expiration
 catalog_cache = TTLCache(maxsize=128, ttl=900)
 search_cache = TTLCache(maxsize=256, ttl=900)
@@ -58,7 +72,13 @@ class WatchAnimeWorldAPI:
 
     @staticmethod
     def _is_blocked(resp):
-        """Detect Cloudflare / anti-bot challenge pages so we fall through to a bypass."""
+        """Detect genuine Cloudflare challenge/interstitial pages.
+
+        NOTE: Cloudflare injects `/cdn-cgi/challenge-platform/scripts/jsd/main.js`
+        into *every* normal page it fronts, so matching 'challenge-platform'
+        (or 'cf-ray'/'cf-chl') produces false positives and throws away valid
+        responses. Only match strong, challenge-page-specific markers.
+        """
         try:
             text = resp.text
         except Exception:
@@ -66,26 +86,70 @@ class WatchAnimeWorldAPI:
         if resp.status_code != 200:
             return True
         low = text.lower()
-        markers = (
-            'cf-chl', 'just a moment', 'attention required', 'challenge-platform',
-            'cf-ray', 'why_captcha', 'verify you are human', 'checking your browser',
+        strong = (
+            'attention required! | cloudflare',
+            'just a moment',
+            'checking your browser before accessing',
             'enable javascript and cookies to continue',
+            'cf_chl_opt',
+            'why_captcha',
+            'verify you are human',
+            'cf-error-details',
+            'id="challenge-form"',
         )
-        if any(m in low for m in markers):
+        if any(m in low for m in strong):
             return True
-        # Short page that names Cloudflare is almost always a challenge/interstitial
-        if 'cloudflare' in low and len(text) < 30000:
+        # A tiny page that only talks about Cloudflare is a challenge/interstitial
+        if len(text) < 15000 and ('cloudflare' in low or 'cf-' in low):
             return True
         return False
 
+    def _get_via_cffi(self, url, user_agent, timeout=TIMEOUT):
+        """Fetch with a real browser TLS/HTTP2 fingerprint via curl_cffi.
+
+        Cloudflare's edge often blocks datacenter IPs (Vercel/Render) based on
+        the TLS/JA3 fingerprint of plain `requests`. curl_cffi impersonates a
+        real Chrome handshake, which frequently passes where `requests` gets a
+        'Just a moment' / 'Attention Required' challenge - no external solver,
+        no browser. Returns None if curl_cffi is unavailable or errors.
+        """
+        try:
+            from curl_cffi import requests as cffi_requests
+        except Exception:
+            return None
+        try:
+            return cffi_requests.get(
+                url,
+                impersonate='chrome',
+                timeout=timeout,
+                allow_redirects=True,
+                headers={
+                    'User-Agent': user_agent,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Referer': 'https://www.google.com/',
+                },
+            )
+        except Exception as e:
+            logging.debug(f"curl_cffi fetch failed for {url}: {e}")
+            return None
+
     def _get(self, url, **kwargs):
         user_agent = random.choice(_USER_AGENTS)
-        self.session.headers['User-Agent'] = user_agent
 
         params = kwargs.pop('params', None)
         timeout = kwargs.pop('timeout', TIMEOUT)
         if params:
             url = f"{url}?{urlencode(params)}"
+
+        # 0. Browser-fingerprint fetch (best chance of passing Cloudflare from
+        #    a datacenter IP - no solver required when it works).
+        cffi_resp = self._get_via_cffi(url, user_agent, timeout)
+        if cffi_resp is not None and not self._is_blocked(cffi_resp):
+            return cffi_resp
+
+        self.session.headers['User-Agent'] = user_agent
 
         # 1. Try direct fetch first (fast, "like before", no solver)
         try:
@@ -127,41 +191,65 @@ class WatchAnimeWorldAPI:
         return self.session.get(url, timeout=timeout, **kwargs)
 
     def _get_via_trawl(self, url, timeout=TIMEOUT):
-        """Fetch a URL through Trawl's /scrape endpoint (or a compatible relay)"""
+        """Fetch a URL through an external solver.
+
+        Supports:
+          - Trawl   : POST {base}/scrape   {"url", "maxTimeout"} -> {"html": ...}
+          - FlareSolverr : POST {base}/v1  {"cmd":"request.get","url","maxTimeout"}
+                           -> {"solution": {"response": "<html>", "status": 200}}
+          - Generic relay : GET {base}/?url=<url> or {base}/fetch?url=<url>
+        """
+        base = Config.SCRAPE_API_URL.rstrip('/')
+        max_ms = int((timeout + 20) * 1000)
+
+        # 1) Trawl-style /scrape
         try:
-            base = Config.SCRAPE_API_URL.rstrip('/')
             resp = requests.post(
                 f"{base}/scrape",
-                json={"url": url, "maxTimeout": (timeout + 10) * 1000},
-                timeout=timeout + 10,
+                json={"url": url, "maxTimeout": max_ms},
+                timeout=timeout + 25,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            html = (
-                data.get("html")
-                or data.get("response")
-                or (data.get("solution") or {}).get("response")
-                or (data.get("solution") or {}).get("html")
-                or ""
-            )
-
-            class TrawlResponse:
-                def __init__(self, text, status_code=200):
-                    self.text = text
-                    self.status_code = status_code
-                def raise_for_status(self):
-                    if self.status_code >= 400:
-                        raise requests.HTTPError(response=self)
-
-            return TrawlResponse(html, 200)
+            if resp.status_code == 200:
+                data = resp.json()
+                html = (
+                    data.get("html")
+                    or data.get("response")
+                    or (data.get("solution") or {}).get("response")
+                    or (data.get("solution") or {}).get("html")
+                    or ""
+                )
+                if html:
+                    return _TextResponse(html, 200)
         except Exception as e:
-            logging.error(f"Trawl scrape failed for {url}: {e}")
-            class EmptyResponse:
-                text = ""
-                status_code = 500
-                def raise_for_status(self):
-                    raise requests.HTTPError(response=self)
-            return EmptyResponse()
+            logging.debug(f"Trawl /scrape failed for {url}: {e}")
+
+        # 2) FlareSolverr-style /v1
+        try:
+            resp = requests.post(
+                f"{base}/v1",
+                json={"cmd": "request.get", "url": url, "maxTimeout": max_ms},
+                timeout=timeout + 25,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                solution = data.get("solution") or {}
+                html = solution.get("response") or solution.get("html") or ""
+                if html:
+                    return _TextResponse(html, int(solution.get("status") or 200))
+        except Exception as e:
+            logging.debug(f"FlareSolverr /v1 failed for {url}: {e}")
+
+        # 3) Generic plain relay (/fetch?url= or /?url=) returning raw HTML
+        for path in (f"{base}/fetch", f"{base}/"):
+            try:
+                resp = requests.get(path, params={"url": url}, timeout=timeout + 10)
+                if resp.status_code == 200 and resp.text and not resp.text.lstrip().startswith("{"):
+                    return _TextResponse(resp.text, 200)
+            except Exception:
+                continue
+
+        logging.error(f"All solver backends failed for {url}")
+        return _TextResponse("", 500)
 
     def _parse_section(self, soup, section_title):
         """Parse a section from homepage by title"""

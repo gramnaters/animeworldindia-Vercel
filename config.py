@@ -19,10 +19,9 @@ class Config:
     # TMDB API Key
     TMDB_API_KEY = os.getenv('TMDB_API_KEY', '')
     
-    # Trawl scrape API (bypasses Cloudflare from Vercel IPs).
-    # Defaults to the project's free Cloudflare-solver (Trawl on Fly.io); override via env.
-    _scrape = os.getenv('SCRAPE_API_URL', '')
-    SCRAPE_API_URL = _scrape if _scrape else 'https://trawl.fly.dev'
+    # External Cloudflare solver (optional). Supports Trawl /scrape, FlareSolverr
+# /v1, or a plain relay. Leave empty to rely on direct + curl_cffi TLS impersonation.
+SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
     
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
