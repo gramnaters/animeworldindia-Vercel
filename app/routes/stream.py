@@ -101,10 +101,10 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
                 streams.append(stream)
         
         if streams:
-            # Let the CDN edge absorb bursts/repeats; streams for an episode are
-            # stable. 5 min server cache + stale-while-revalidate behaviour,
-            # 60 s browser cache.
-            return respond_with({'streams': streams}, 300, 60, use_etag=False)
+            # Let the CDN edge absorb bursts/repeats. 10 min server cache, and
+            # stale-while-revalidate means the edge serves instantly while it
+            # refreshes in the background (no cold-start wait for users).
+            return respond_with({'streams': streams}, 600, 60, use_etag=False, swr=1800)
 
         # Don't cache empty results for long - the episode may still be mapping.
         return respond_with({'streams': []}, 30, 0, use_etag=False)

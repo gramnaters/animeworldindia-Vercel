@@ -47,7 +47,7 @@ def generate_etag(data: dict) -> str:
 
 
 # Enable CORS
-def respond_with(data: dict, cache_time: int = None, client_cache_time: int = 0, use_etag: bool = True) -> Response:
+def respond_with(data: dict, cache_time: int = None, client_cache_time: int = 0, use_etag: bool = True, swr: int = None) -> Response:
     """
     Respond with CORS headers to the client
     """
@@ -59,9 +59,14 @@ def respond_with(data: dict, cache_time: int = None, client_cache_time: int = 0,
     resp = jsonify(data)
     if cache_time:
         # NOTE: the header is "s-maxage" (no hyphen). "s-max-age" is ignored by CDNs.
-        resp.headers['Cache-Control'] = f'public, s-maxage={cache_time}, max-age={client_cache_time}'
+        cc = f'public, s-maxage={cache_time}, max-age={client_cache_time}'
+        vcc = f'public, s-maxage={cache_time}'
+        if swr:
+            cc += f', stale-while-revalidate={swr}'
+            vcc += f', stale-while-revalidate={swr}'
+        resp.headers['Cache-Control'] = cc
         resp.headers['CDN-Cache-Control'] = f'public, s-maxage={cache_time}, maxage={cache_time}'
-        resp.headers['Vercel-CDN-Cache-Control'] = f'public, s-maxage={cache_time}'
+        resp.headers['Vercel-CDN-Cache-Control'] = vcc
         resp.headers['Cloudflare-CDN-Cache-Control'] = f'public, maxage={cache_time}'
     
     if use_etag:
