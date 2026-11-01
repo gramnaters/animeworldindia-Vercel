@@ -70,10 +70,14 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             #             path at all). The .m3u8 URL is required: the plain
             #             master.txt is text/plain and mpv/ffmpeg detect it as tty.
             if stream_mode == 'proxy':
-                proto = Config.PROTOCOL
-                prefix = f'{proto}://{host}' + (f'/{preferred_lang}' if preferred_lang else '')
                 token = base64.urlsafe_b64encode(video_source.encode()).decode().rstrip('=')
-                video_url = f'{prefix}/hls/{token}.m3u8'
+                if Config.HLS_BASE:
+                    # Edge worker serves the playlists (no cold starts).
+                    video_url = f'{Config.HLS_BASE}/hls/{token}.m3u8'
+                else:
+                    proto = Config.PROTOCOL
+                    prefix = f'{proto}://{host}' + (f'/{preferred_lang}' if preferred_lang else '')
+                    video_url = f'{prefix}/hls/{token}.m3u8'
             else:
                 # direct: hand the player the plain CDN master. Works on
                 # ExoPlayer (we declare type=hls) but NOT on mpv/ffmpeg, which

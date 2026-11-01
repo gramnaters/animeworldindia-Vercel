@@ -43,6 +43,11 @@ class Config:
     # always direct regardless of this flag.
     DIRECT_VARIANTS = os.getenv('DIRECT_VARIANTS', '0') in ('1', 'true', 'True', 'yes')
 
+    # Optional Cloudflare Worker that serves the HLS playlists at the edge
+    # (no cold starts). e.g. https://anw.gramnaters.workers.dev
+    # Empty = serve playlists from this addon.
+    HLS_BASE = os.getenv('HLS_BASE', '').rstrip('/')
+
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
     SCRAPER_PROXY_PASSWORD = os.getenv('SCRAPER_PROXY_PASSWORD', '')
