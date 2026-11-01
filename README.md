@@ -5,7 +5,7 @@
 ![Status](https://img.shields.io/badge/status-Active-brightgreen.svg)
 
 <div align="center">
-  <img src="https://watchanimeworld.top/wp-content/uploads/AWI-SiteTitle-1.png" alt="WatchAnimeWorld Logo" width="300">
+  <img src="static/logo.png" alt="WatchAnimeWorld Logo" width="300">
 </div>
 
 This unofficial Stremio addon allows users to access anime streams from [AnimeWorld India](https://watchanimeworld.top/) - source for anime in Hindi, Tamil, Telugu & English.
