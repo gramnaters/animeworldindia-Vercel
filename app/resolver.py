@@ -7,6 +7,7 @@ _domain_cache = TTLCache(maxsize=16, ttl=3600)
 
 _KNOWN_DOMAINS = {
     'watchanimeworld': [
+        'https://watchanimeworld.top',
         'https://watchanimeworld.one',
         'https://watchanimeworld.net',
         'https://watchanimeworld.com',
@@ -25,7 +26,10 @@ def _check_domain(url, timeout=3):
     try:
         r = requests.head(url, timeout=timeout, allow_redirects=True)
         if r.status_code < 500:
-            return r.url.rstrip('/')
+            # Return the requested URL (not the redirect target) so the
+            # configured domain (e.g. watchanimeworld.top) is the one used;
+            # requests follows the 301 automatically on later calls.
+            return url.rstrip('/')
     except Exception:
         pass
     return None
@@ -61,7 +65,7 @@ def resolve_domain(provider, force=False):
 
 
 def get_watchanimeworld_base_url(force=False):
-    return resolve_domain('watchanimeworld', force=force) or 'https://watchanimeworld.one'
+    return resolve_domain('watchanimeworld', force=force) or 'https://watchanimeworld.top'
 
 
 def get_zephyrix_base_url(force=False):

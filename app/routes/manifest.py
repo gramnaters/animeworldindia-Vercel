@@ -6,13 +6,12 @@ manifest_blueprint = Blueprint('manifest', __name__)
 
 MANIFEST = {
     'id': 'com.skoruppa.watchanimeworld-stremio-addon',
-    'version': '0.1.0',
+    'version': '0.2.0',
     'name': 'Anime World India Addon',
     'logo': 'https://watchanimeworld.top/wp-content/uploads/AWI-SiteTitle-1.png',
     'description': 'Watch anime in Hindi, Tamil, Telugu & English from WatchAnimeWorld.top',
     'types': ['anime', 'series', 'movie'],
     'idPrefixes': ['tt'],
-    'contactEmail': 'skoruppa@gmail.com',
     'catalogs': [
         {'type': 'anime', 'id': 'newest_drops', 'name': 'Newest Drops'},
         {'type': 'anime', 'id': 'most_watched_shows', 'name': 'Most-Watched Shows'},
@@ -35,6 +34,24 @@ MANIFEST = {
 }
 
 
+def _manifest_for_request():
+    """Return the manifest, honouring the ``?catalogs=0`` toggle.
+
+    The web configuration page lets users disable the catalogs (Discover rows).
+    When disabled we return a manifest without the ``catalog`` resource so
+    Stremio hides the catalogs entirely; meta/stream keep working.
+    """
+    from flask import request
+
+    value = (request.args.get('catalogs') or '1').strip().lower()
+    if value in ('0', 'false', 'off', 'no'):
+        manifest = dict(MANIFEST)
+        manifest['catalogs'] = []
+        manifest['resources'] = [r for r in MANIFEST['resources'] if r != 'catalog']
+        return manifest
+    return MANIFEST
+
+
 @manifest_blueprint.route('/manifest.json')
 @manifest_blueprint.route('/<lang>/manifest.json')
 def addon_manifest(lang=None):
@@ -43,4 +60,4 @@ def addon_manifest(lang=None):
     :param lang: Optional language prefix for backward compatibility
     :return: JSON response
     """
-    return respond_with(MANIFEST, 7200)
+    return respond_with(_manifest_for_request(), 7200, use_etag=False)

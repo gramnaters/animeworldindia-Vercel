@@ -45,6 +45,16 @@
                                             <option value="eng" {{ 'selected' if lang == 'eng' else '' }}>English</option>
                                         </select>
                                     </div>
+                                    <div id="catalogToggleDiv" class="mt-3 form-check" style="display: {{ 'block' if lang else 'none' }};">
+                                        <input class="form-check-input" type="checkbox" id="catalogCheck" checked onchange="updateManifestUrl()" autocomplete="off">
+                                        <label class="form-check-label text-white" for="catalogCheck">
+                                            Show catalogs in Stremio
+                                        </label>
+                                        <span class="info-icon" onclick="toggleTooltip(event)">
+                                            <i class="bi bi-info-circle"></i>
+                                            <span class="tooltip-text">Uncheck to hide the Discover catalogs (Newest Drops, Most-Watched, etc.). Playback and metadata still work when you open a title directly.</span>
+                                        </span>
+                                    </div>
                                 </div>
                                 
                                 <div class="mb-4">
@@ -84,12 +94,6 @@
             <div class="text-center">
                 <small class="text-white-50">
                     Anime World India Stremio v{{ version }}
-                    <a href="https://github.com/skoruppa/anime-world-stremio-addon" target="_blank" class="text-accent text-decoration-none ms-3" title="GitHub">
-                        <i class="bi bi-github fs-5"></i>
-                    </a>
-                    <a href="https://ko-fi.com/skoruppa" target="_blank" class="text-accent text-decoration-none ms-2" title="Support on Ko-fi">
-                        <i class="bi bi-cup-hot-fill fs-5"></i>
-                    </a>
                 </small>
             </div>
         </div>

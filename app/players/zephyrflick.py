@@ -1,7 +1,6 @@
 import re
 import base64
 import requests
-from urllib.parse import quote
 from cachetools import TTLCache
 from app.routes.utils import get_random_agent
 from config import Config

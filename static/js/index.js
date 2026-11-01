@@ -21,12 +21,15 @@ function copy_to_clipboard() {
 function toggleLanguageSelect() {
     const checkbox = document.getElementById('advancedCheck');
     const languageDiv = document.getElementById('languageSelectDiv');
+    const catalogDiv = document.getElementById('catalogToggleDiv');
     
     if (checkbox.checked) {
         languageDiv.style.display = 'block';
+        if (catalogDiv) catalogDiv.style.display = 'block';
         updateManifestUrl();
     } else {
         languageDiv.style.display = 'none';
+        if (catalogDiv) catalogDiv.style.display = 'none';
         updateManifestUrl();
     }
 }
@@ -72,16 +75,28 @@ document.addEventListener('click', function(event) {
 function updateManifestUrl() {
     const checkbox = document.getElementById('advancedCheck');
     const languageSelect = document.getElementById('languageSelect');
+    const catalogCheck = document.getElementById('catalogCheck');
     const manifestInput = document.getElementById('manifest_url');
-    const baseUrl = manifestInput.value.replace(/\/(hin|tam|tel|jpn|eng)\/manifest\.json$/, '/manifest.json').replace(/\/manifest\.json$/, '');
-    
+    const baseUrl = manifestInput.value
+        .split('?')[0]
+        .replace(/\/(hin|tam|tel|jpn|eng)\/manifest\.json$/, '/manifest.json')
+        .replace(/\/manifest\.json$/, '');
+
+    let url;
     if (checkbox.checked) {
-        const lang = languageSelect.value;
-        manifestInput.value = `${baseUrl}/${lang}/manifest.json`;
+        url = `${baseUrl}/${languageSelect.value}/manifest.json`;
     } else {
-        manifestInput.value = `${baseUrl}/manifest.json`;
+        url = `${baseUrl}/manifest.json`;
     }
-    
+
+    // Advanced option: hide the Discover catalogs in Stremio.
+    const catalogsEnabled = catalogCheck ? catalogCheck.checked : true;
+    if (!catalogsEnabled) {
+        url += '?catalogs=0';
+    }
+
+    manifestInput.value = url;
+
     // Update install button
     const installBtn = document.querySelector('.btn-success');
     installBtn.onclick = function() {
