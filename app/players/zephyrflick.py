@@ -75,7 +75,13 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
                 token = base64.urlsafe_b64encode(video_source.encode()).decode().rstrip('=')
                 video_url = f'{prefix}/hls/{token}.m3u8'
             else:
-                video_url = secured_link or video_source
+                # direct: hand the player the plain CDN master. Works on
+                # ExoPlayer (we declare type=hls) but NOT on mpv/ffmpeg, which
+                # classify the text/plain master.txt as "tty".
+                # Note: the *_securedLink* variant cannot be used here - its md5
+                # token is bound to the IP that generated it (this server), so
+                # clients always get 403.
+                video_url = video_source
 
             # The CDN (s11.zn-grid*.top) and the master/variant playlists require
             # the player Referer (and a browser UA), otherwise segments return 403.
