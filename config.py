@@ -20,8 +20,8 @@ class Config:
     TMDB_API_KEY = os.getenv('TMDB_API_KEY', '')
     
     # External Cloudflare solver (optional). Supports Trawl /scrape, FlareSolverr
-# /v1, or a plain relay. Leave empty to rely on direct + curl_cffi TLS impersonation.
-SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
+    # /v1, or a plain relay. Leave empty to rely on direct + curl_cffi TLS impersonation.
+    SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
     
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
