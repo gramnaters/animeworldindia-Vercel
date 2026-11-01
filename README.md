@@ -1,67 +1,69 @@
 # Anime World India Stremio Addon
-![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Status](https://img.shields.io/badge/status-Active-brightgreen.svg)
 
 <div align="center">
-  <img src="https://watchanimeworld.net/wp-content/uploads/AWI-SiteTitle-1.png" alt="WatchAnimeWorld Logo" width="300">
+  <img src="https://watchanimeworld.top/wp-content/uploads/AWI-SiteTitle-1.png" alt="WatchAnimeWorld Logo" width="300">
 </div>
 
-This unofficial Stremio addon allows users to access anime streams from [AnimeWorld India](https://watchanimeworld.net/) - source for anime in Hindi, Tamil, Telugu & English.
+This unofficial Stremio addon allows users to access anime streams from [AnimeWorld India](https://watchanimeworld.top/) - source for anime in Hindi, Tamil, Telugu & English.
 
-## 🎯 Supported Players
-- **Zephyrflick**: Primary streaming source with subtitle support
+## Supported Players
 
-## ✨ Features
-- 🌐 Multiple language support: **Hindi, Tamil, Telugu & English**
-- 📝 Subtitles in VTT/SRT format
-- 📺 Multiple catalogs:
-  - **Newest Drops** - Latest episode releases
-  - **Most-Watched Shows** - Popular anime series
-  - **New Anime Arrivals** - Recently added series
-  - **Most-Watched Films** - Popular anime movies
-  - **Latest Anime Movies** - Recently added movies
-- 🔍 Search functionality
-- 🎬 Multi-season support
+- **Zephyrflick** — primary streaming source with subtitle support
 
-## 🚀 Usage
+## Features
 
-- Browse through 5 different catalogs
+- Multiple language support: **Hindi, Tamil, Telugu & English**
+- Subtitles in VTT/SRT format
+- Multiple catalogs (can be disabled in the advanced settings):
+  - **Newest Drops** — latest episode releases
+  - **Most-Watched Shows** — popular anime series
+  - **New Anime Arrivals** — recently added series
+  - **Most-Watched Films** — popular anime movies
+  - **Latest Anime Movies** — recently added movies
+- Search functionality
+- Multi-season support
+- Instant seeking: playlists are served by the addon, while video segments stream directly from the CDN
+
+## Usage
+
+- Browse through the catalogs (or turn them off in advanced settings)
 - Search for your favorite anime
 - Watch with subtitles in multiple languages
 
-## 🛠️ Installation
+## Installation
 
 ### Quick Install
 
-1. Visit **[https://anime-world-stremio-addon.onrender.com/](https://anime-world-stremio-addon.onrender.com/)**
-2. Click **"Install In Stremio"** button 
-3. In Stremio, click install, and the addon will be added and ready for use
-
+1. Visit **[https://animeworld-india.vercel.app/](https://animeworld-india.vercel.app/)**
+2. Click **"Install in Stremio"**
+3. Confirm in Stremio and the addon is ready to use
 
 ### Manual Installation
 
-To install the addon manually:
-
-1. Visit [https://anime-world-stremio-addon.onrender.com/](https://anime-world-stremio-addon.onrender.com/)
+1. Visit [https://animeworld-india.vercel.app/](https://animeworld-india.vercel.app/)
 2. Copy the manifest URL
 3. Open Stremio and go to the addon search box
-4. Paste the copied manifest URL into the addon search box and press Enter
-5. In Stremio, click install, and the addon will be added and ready for use
+4. Paste the manifest URL and press Enter
+5. Click install
 
-## 🏠 Self-Hosting
+## Self-Hosting
 
 ### Prerequisites
-- Python 3.8+
-- TMDB API Key (required) - Get it from [TMDB](https://www.themoviedb.org/settings/api)
+
+- Python 3.11+
+- TMDB API Key (required) — get it from [TMDB](https://www.themoviedb.org/settings/api)
 - PostgreSQL or SQLite database
 
 ### Installation Steps
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/skoruppa/anime-world-stremio-addon.git
-cd anime-world-stremio-addon
+git clone https://github.com/gramnaters/animeworldindia-Vercel.git
+cd animeworldindia-Vercel
 ```
 
 2. **Install dependencies**
@@ -104,33 +106,39 @@ python run.py
 gunicorn -c gunicorn_config.py run:app
 ```
 
-The addon will be available at `http://localhost:5000`
+The addon will be available at `http://localhost:5000`.
 
 ### Environment Variables
 
-| Variable | Required | Default       | Description |
-|----------|----------|---------------|-------------|
-| `TMDB_API_KEY` | **Yes** | -             | TMDB API key for IMDB mapping |
-| `DB_TYPE` | No | `sqlite`      | Database type (`sqlite` or `postgresql`) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TMDB_API_KEY` | **Yes** | - | TMDB API key for IMDb mapping |
+| `DB_TYPE` | No | `sqlite` | Database type (`sqlite` or `postgresql`) |
 | `DB_PATH` | No | `mappings.db` | SQLite database file path |
-| `DATABASE_URL` | No | -             | PostgreSQL connection string |
-| `FLASK_RUN_HOST` | No | `localhost`   | Host to bind the server |
-| `FLASK_RUN_PORT` | No | `5000`        | Port to bind the server |
-| `FLASK_DEBUG` | No | `False`       | Enable debug mode |
-| `GUNICORN_WORKERS` | No | `3`           | Number of gunicorn workers |
+| `DATABASE_URL` | No | - | PostgreSQL connection string |
+| `FLASK_RUN_HOST` | No | `localhost` | Host to bind the server |
+| `FLASK_RUN_PORT` | No | `5000` | Port to bind the server |
+| `FLASK_DEBUG` | No | `False` | Enable debug mode |
+| `GUNICORN_WORKERS` | No | `3` | Number of gunicorn workers |
+| `STREAM_MODE` | No | `proxy` | `proxy` serves playlists via the addon; `direct` returns the CDN URL + proxyHeaders |
+| `DIRECT_SEGMENTS` | No | `1` | `1` = video segments stream directly from the CDN |
+| `SCRAPE_API_URL` | No | - | Optional external solver (Trawl / FlareSolverr / relay) if the scraper is Cloudflare-blocked |
 
-## 📝 API References
+> **Vercel note:** the serverless functions must run outside ranges Cloudflare blocks. This project sets `"regions": ["bom1"]` in `vercel.json`; running in `iad1` gets a Cloudflare `403` on the scraper.
 
-This addon is developed using:
+## API References
+
+This addon is built with:
 
 - **Stremio Addon SDK**: [official documentation](https://github.com/Stremio/stremio-addon-sdk)
-- **WatchAnimeWorld.net**: Website providing all the anime
-- **TMDB API**: For IMDB ID mapping and metadata
+- **WatchAnimeWorld.top**: website providing all the anime
+- **TMDB API**: for IMDb ID mapping and metadata
 
-## 🐛 Help
+## Help
 
-If you encounter any issues or have any questions regarding the addon, feel free to report them in the [issues section](https://github.com/skoruppa/anime-world-stremio-addon/issues).
+If you encounter issues or have questions, open an issue at
+[https://github.com/gramnaters/animeworldindia-Vercel/issues](https://github.com/gramnaters/animeworldindia-Vercel/issues).
 
-## 🤝 Support
+## Credits
 
-If you want to thank me for the addon, you can [support me on Ko-fi](https://ko-fi.com/skoruppa) ☕
+Original addon by [skoruppa on GitHub](https://github.com/skoruppa/anime-world-stremio-addon).
