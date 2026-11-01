@@ -23,6 +23,13 @@ class Config:
     # /v1, or a plain relay. Leave empty to rely on direct + curl_cffi TLS impersonation.
     SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
     
+    # Stream delivery mode.
+    #   direct (default) -> return the upstream CDN master URL + proxyHeaders so
+    #                       Stremio fetches variants/segments straight from the
+    #                       CDN (instant seeking, zero addon bandwidth).
+    #   proxy            -> relay all HLS through this addon (legacy/slow).
+    STREAM_MODE = os.getenv('STREAM_MODE', 'direct').lower()
+
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
     SCRAPER_PROXY_PASSWORD = os.getenv('SCRAPER_PROXY_PASSWORD', '')

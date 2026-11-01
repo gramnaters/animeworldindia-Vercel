@@ -48,15 +48,23 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             if not video_url:
                 return None, None, None, []
 
-            proto = Config.PROTOCOL
-            if preferred_lang:
-                video_url = video_url.replace(base_url, f'{proto}://{host}/{preferred_lang}')
-            else:
-                video_url = video_url.replace(base_url, f'{proto}://{host}')
+            # Delivery: by default return the upstream CDN master URL directly
+            # and let Stremio fetch variants/segments from the CDN itself (using
+            # proxyHeaders below). This is instant + zero addon bandwidth.
+            # STREAM_MODE=proxy restores the old relay-through-addon behaviour.
+            if Config.STREAM_MODE == 'proxy':
+                proto = Config.PROTOCOL
+                if preferred_lang:
+                    video_url = video_url.replace(base_url, f'{proto}://{host}/{preferred_lang}')
+                else:
+                    video_url = video_url.replace(base_url, f'{proto}://{host}')
 
+            # The CDN (s11.zn-grid*.top) and the master/variant playlists require
+            # the player Referer (and a browser UA), otherwise segments return 403.
             stream_headers = {
                 'request': {
-                    'Referer': f'{base_url}/'
+                    'Referer': f'{base_url}/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 }
             }
 
