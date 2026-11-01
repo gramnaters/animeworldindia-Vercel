@@ -122,7 +122,24 @@ The addon will be available at `http://localhost:5000`.
 | `GUNICORN_WORKERS` | No | `3` | Number of gunicorn workers |
 | `STREAM_MODE` | No | `proxy` | `proxy` serves playlists via the addon; `direct` returns the CDN URL + proxyHeaders |
 | `DIRECT_SEGMENTS` | No | `1` | `1` = video segments stream directly from the CDN |
+| `DIRECT_VARIANTS` | No | `0` | `1` = variants direct from the CDN (breaks Android ExoPlayer; leave `0`) |
+| `HLS_BASE` | No | - | Edge URL that serves the HLS playlists (e.g. a Cloudflare Worker). Empty = serve from this addon |
 | `SCRAPE_API_URL` | No | - | Optional external solver (Trawl / FlareSolverr / relay) if the scraper is Cloudflare-blocked |
+
+## Architecture
+
+```
+/stream  -> Vercel addon (scrape + TMDB mapping, edge-cached 10 min)
+             returns  https://<HLS_BASE>/hls/<token>.m3u8  + proxyHeaders
+
+hls/<token>.m3u8  -> Cloudflare Worker (UPSTREAM master, rewritten; cached 10 min)
+m3/<token>        -> Cloudflare Worker (variant playlist; cached 10 min)
+s11.zn-grid*.top  -> CDN directly (video segments, Referer via proxyHeaders)
+```
+
+Only two small playlist requests leave the client, and only `/stream` touches
+Vercel. Playlists are served from the edge with no cold starts; video bytes go
+CDN → client.
 
 > **Vercel note:** the serverless functions must run outside ranges Cloudflare blocks. This project sets `"regions": ["bom1"]` in `vercel.json`; running in `iad1` gets a Cloudflare `403` on the scraper.
 
