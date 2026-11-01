@@ -72,14 +72,14 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
         abort(404)
 
     if len(parts) < 1 or not parts[0].startswith('tt'):
-        return respond_with({'streams': []}, use_etag=False)
+        return respond_with({'streams': []}, 30, 0, use_etag=False)
 
     imdb_id = parts[0]
     
     slug = get_or_create_slug_mapping(imdb_id)
     if not slug:
         print(f"Stream: no slug found for {imdb_id}")
-        return respond_with({'streams': []}, use_etag=False)
+        return respond_with({'streams': []}, 30, 0, use_etag=False)
     
     if len(parts) == 3:
         season = int(parts[1])
@@ -100,7 +100,14 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
             if stream:
                 streams.append(stream)
         
-        return respond_with({'streams': streams}, use_etag=False)
+        if streams:
+            # Let the CDN edge absorb bursts/repeats; streams for an episode are
+            # stable. 5 min server cache + stale-while-revalidate behaviour,
+            # 60 s browser cache.
+            return respond_with({'streams': streams}, 300, 60, use_etag=False)
+
+        # Don't cache empty results for long - the episode may still be mapping.
+        return respond_with({'streams': []}, 30, 0, use_etag=False)
     except Exception as e:
         print(f"Error getting streams: {e}")
-        return respond_with({'streams': []}, use_etag=False)
+        return respond_with({'streams': []}, 30, 0, use_etag=False)

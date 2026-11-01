@@ -58,7 +58,8 @@ def respond_with(data: dict, cache_time: int = None, client_cache_time: int = 0,
 
     resp = jsonify(data)
     if cache_time:
-        resp.headers['Cache-Control'] = f'public, s-max-age={cache_time}, max-age={client_cache_time}'
+        # NOTE: the header is "s-maxage" (no hyphen). "s-max-age" is ignored by CDNs.
+        resp.headers['Cache-Control'] = f'public, s-maxage={cache_time}, max-age={client_cache_time}'
         resp.headers['CDN-Cache-Control'] = f'public, s-maxage={cache_time}, maxage={cache_time}'
         resp.headers['Vercel-CDN-Cache-Control'] = f'public, s-maxage={cache_time}'
         resp.headers['Cloudflare-CDN-Cache-Control'] = f'public, maxage={cache_time}'

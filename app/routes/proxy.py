@@ -24,6 +24,14 @@ _cdn_session.mount('http://', _cdn_adapter)
 # repeat playback / seeking doesn't refetch master+variant from the CDN.
 playlist_cache = TTLCache(maxsize=256, ttl=600)
 
+
+def _cache_playlist(response, seconds=600):
+    """Let the CDN edge cache playlist responses (they are immutable per token)."""
+    response.headers['Cache-Control'] = f'public, s-maxage={seconds}, stale-while-revalidate={seconds}'
+    response.headers['CDN-Cache-Control'] = f'public, s-maxage={seconds}'
+    response.headers['Vercel-CDN-Cache-Control'] = f'public, s-maxage={seconds}'
+    return response
+
 def reorder_audio_tracks(m3u8_content: str, preferred_lang: str) -> str:
     lines = m3u8_content.split('\n')
     audio_tracks = []
@@ -99,6 +107,7 @@ def proxy_hls(path, lang=None):
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = '*'
+            _cache_playlist(response)
             return response
         except Exception as e:
             if attempt == 0:
@@ -151,6 +160,7 @@ def proxy_master_m3u8(token, lang=None):
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = '*'
+        _cache_playlist(response)
         return response
     except Exception as e:
         print(f"Error proxying master m3u8: {e}")
@@ -189,6 +199,7 @@ def proxy_m3(path, lang=None):
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = '*'
+            _cache_playlist(response)
             return response
         except Exception as e:
             if attempt == 0:
