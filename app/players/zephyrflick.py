@@ -72,7 +72,8 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
                 # segments stay absolute -> direct from the CDN.
                 proto = Config.PROTOCOL
                 prefix = f'{proto}://{host}' + (f'/{preferred_lang}' if preferred_lang else '')
-                video_url = f'{prefix}/hls.m3u8?u={quote(video_url, safe="")}'
+                token = base64.urlsafe_b64encode(video_url.encode()).decode().rstrip('=')
+                video_url = f'{prefix}/hls/{token}.m3u8'
 
             # The CDN (s11.zn-grid*.top) and the master/variant playlists require
             # the player Referer (and a browser UA), otherwise segments return 403.

@@ -110,18 +110,24 @@ def proxy_hls(path, lang=None):
     abort(502)
 
 
-@proxy_bp.route('/hls.m3u8')
-@proxy_bp.route('/<lang>/hls.m3u8')
-def proxy_master_m3u8(lang=None):
+@proxy_bp.route('/hls/<token>.m3u8')
+@proxy_bp.route('/<lang>/hls/<token>.m3u8')
+def proxy_master_m3u8(token, lang=None):
     """Serve the upstream master playlist at a URL ending in .m3u8.
 
     mpv/ffmpeg will not reliably auto-detect HLS from the upstream
-    ``.../master.txt`` (served as text/plain, and its probe window is full of
-    long #EXT-X-MEDIA URIs). Ending the URL in .m3u8 makes detection reliable.
-    Variants are proxied back through here; segments stay absolute (direct CDN).
+    ``.../master.txt`` (text/plain, and its probe window is full of long
+    #EXT-X-MEDIA URIs). The source URL is passed as a base64url path token so
+    the request path literally ends in ".m3u8" (a query string would break
+    ffmpeg's extension detection). Variants are proxied back through here;
+    segments stay absolute (direct from the CDN).
     """
-    original_url = request.args.get('u', '')
-    if not original_url:
+    try:
+        padded = token + '=' * (-len(token) % 4)
+        original_url = base64.urlsafe_b64decode(padded).decode('utf-8')
+    except Exception:
+        abort(400)
+    if not original_url.startswith('http'):
         abort(400)
 
     base_url = get_zephyrix_base_url()
