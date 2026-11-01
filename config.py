@@ -24,11 +24,12 @@ class Config:
     SCRAPE_API_URL = os.getenv('SCRAPE_API_URL', '')
     
     # Stream delivery mode.
-    #   direct (default) -> return the upstream CDN master URL + proxyHeaders so
-    #                       Stremio fetches variants/segments straight from the
-    #                       CDN (instant seeking, zero addon bandwidth).
-    #   proxy            -> relay all HLS through this addon (legacy/slow).
-    STREAM_MODE = os.getenv('STREAM_MODE', 'direct').lower()
+    #   proxy (default)  -> relay HLS through this addon (required: Stremio does
+    #                       NOT apply proxyHeaders to HLS playlist sub-requests,
+    #                       so direct CDN segments 403 without the Referer).
+    #   direct           -> return the CDN URL + proxyHeaders (works only in
+    #                       players that apply headers to sub-requests, not Stremio).
+    STREAM_MODE = os.getenv('STREAM_MODE', 'proxy').lower()
 
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')

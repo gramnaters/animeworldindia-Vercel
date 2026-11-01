@@ -1,6 +1,7 @@
 import base64
 import re
 import requests
+from requests.adapters import HTTPAdapter
 from flask import Blueprint, Response, request, abort
 from urllib.parse import unquote
 from cachetools import TTLCache
@@ -11,6 +12,17 @@ from app.resolver import get_zephyrix_base_url, invalidate_domain
 proxy_bp = Blueprint('proxy', __name__)
 
 subtitle_mappings = TTLCache(maxsize=500, ttl=3600)
+
+# Reused CDN session with connection pooling. Without this every HLS segment
+# pays a fresh DNS + TCP + TLS handshake to the CDN (~1.3s/segment -> stutter).
+_cdn_session = requests.Session()
+_cdn_adapter = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=1)
+_cdn_session.mount('https://', _cdn_adapter)
+_cdn_session.mount('http://', _cdn_adapter)
+
+# Playlists are small and static per episode -> cache the raw upstream text so
+# repeat playback / seeking doesn't refetch master+variant from the CDN.
+playlist_cache = TTLCache(maxsize=256, ttl=600)
 
 def reorder_audio_tracks(m3u8_content: str, preferred_lang: str) -> str:
     lines = m3u8_content.split('\n')
@@ -66,15 +78,17 @@ def proxy_hls(path, lang=None):
                 'Referer': f'{base_url}/'
             }
 
-            resp = requests.get(original_url, headers=headers, timeout=30)
+            raw = playlist_cache.get(original_url)
+            if raw is None:
+                resp = _cdn_session.get(original_url, headers=headers, timeout=30)
+                if resp.status_code in (403, 429, 502, 503) and attempt == 0:
+                    invalidate_domain('zephyrix')
+                    continue
+                resp.raise_for_status()
+                raw = resp.text
+                playlist_cache[original_url] = raw
 
-            if resp.status_code in (403, 429, 502, 503) and attempt == 0:
-                invalidate_domain('zephyrix')
-                continue
-
-            resp.raise_for_status()
-
-            content = resp.text
+            content = raw
 
             if lang:
                 content = reorder_audio_tracks(content, lang)
@@ -112,16 +126,17 @@ def proxy_m3(path, lang=None):
                 'Referer': f'{base_url}/'
             }
 
-            resp = requests.get(original_url, headers=headers, timeout=30)
+            raw = playlist_cache.get(original_url)
+            if raw is None:
+                resp = _cdn_session.get(original_url, headers=headers, timeout=30)
+                if resp.status_code in (403, 429, 502, 503) and attempt == 0:
+                    invalidate_domain('zephyrix')
+                    continue
+                resp.raise_for_status()
+                raw = resp.text
+                playlist_cache[original_url] = raw
 
-            if resp.status_code in (403, 429, 502, 503) and attempt == 0:
-                invalidate_domain('zephyrix')
-                continue
-
-            resp.raise_for_status()
-
-            content = resp.text
-            content = _rewrite_m3u8_paths(content, base_url)
+            content = _rewrite_m3u8_paths(raw, base_url)
 
             response = Response(content, mimetype='application/vnd.apple.mpegurl')
             response.headers['Access-Control-Allow-Origin'] = '*'
@@ -184,7 +199,7 @@ def proxy_segment(encoded):
     }
 
     try:
-        resp = requests.get(original_url, headers=headers, timeout=30, stream=True)
+        resp = _cdn_session.get(original_url, headers=headers, timeout=30, stream=True)
         resp.raise_for_status()
 
         ct = resp.headers.get('Content-Type', 'application/octet-stream')
