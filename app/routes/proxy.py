@@ -229,7 +229,7 @@ def _rewrite_m3u8_paths(content, base_url):
     def replace_uri(match):
         prefix = match.group(1)
         path = match.group(2)
-        return f'{prefix}{rewrite_url(path)}'
+        return f'{prefix}{rewrite_url(path)}"'
 
     content = re.sub(r'(URI=")([^"]+)"', replace_uri, content)
 
