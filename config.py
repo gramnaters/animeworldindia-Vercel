@@ -36,6 +36,11 @@ class Config:
     # the client must send the Referer (we expose it via proxyHeaders).
     DIRECT_SEGMENTS = os.getenv('DIRECT_SEGMENTS', '1') in ('1', 'true', 'True', 'yes')
 
+    # Also send variant playlists straight from the CDN (absolute /m3/ URLs)
+    # instead of routing them through the addon. Only the master playlist then
+    # touches the addon (1 small cached request per play).
+    DIRECT_VARIANTS = os.getenv('DIRECT_VARIANTS', '1') in ('1', 'true', 'True', 'yes')
+
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
     SCRAPER_PROXY_PASSWORD = os.getenv('SCRAPER_PROXY_PASSWORD', '')

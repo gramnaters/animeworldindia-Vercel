@@ -221,6 +221,8 @@ def _rewrite_m3u8_paths(content, base_url):
             encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip('=')
             return f'{host}/proxy/segment/{encoded}'
         if url.startswith('/m3/'):
+            if Config.DIRECT_VARIANTS:
+                return f'{base_url}{url}'
             return f'{host}{url}'
         if url.startswith('/hls/'):
             return f'{host}/cdn/hls{url[len("/hls"):]}'
