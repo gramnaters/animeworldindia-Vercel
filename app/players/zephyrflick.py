@@ -11,14 +11,16 @@ from app.resolver import get_zephyrix_base_url, invalidate_domain
 # cache it briefly to make repeat plays open instantly.
 _resolve_cache = TTLCache(maxsize=256, ttl=900)
 
-async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str = None, host: str = 'localhost'):
+async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str = None, host: str = 'localhost', mode: str = None):
     """
     Extract video URL and subtitles from Zephyrflick player
     :param player_url: Zephyrflick player URL
     :param preferred_lang: Preferred audio language (e.g. 'hin', 'eng', 'jpn')
+    :param mode: 'direct' (CDN URL + proxyHeaders) or 'proxy' (relay through addon)
     :return: tuple (video_url, quality, headers, subtitles)
     """
-    cache_key = f'{player_url}|{preferred_lang}|{host}'
+    stream_mode = (mode or Config.STREAM_MODE or 'proxy').lower()
+    cache_key = f'{player_url}|{preferred_lang}|{host}|{stream_mode}'
     cached = _resolve_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -63,7 +65,7 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             # and let Stremio fetch variants/segments from the CDN itself (using
             # proxyHeaders below). This is instant + zero addon bandwidth.
             # STREAM_MODE=proxy restores the old relay-through-addon behaviour.
-            if Config.STREAM_MODE == 'proxy':
+            if stream_mode == 'proxy':
                 proto = Config.PROTOCOL
                 if preferred_lang:
                     video_url = video_url.replace(base_url, f'{proto}://{host}/{preferred_lang}')

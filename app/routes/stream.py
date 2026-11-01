@@ -11,7 +11,7 @@ from config import Config
 stream_bp = Blueprint('stream', __name__)
 
 
-def process_stream_sync(stream_data, preferred_lang=None, host='localhost'):
+def process_stream_sync(stream_data, preferred_lang=None, host='localhost', mode=None):
     """Process a single stream source"""
     from app.players.zephyrflick import get_video_from_zephyrflick_player
     import asyncio
@@ -28,7 +28,7 @@ def process_stream_sync(stream_data, preferred_lang=None, host='localhost'):
                 asyncio.set_event_loop(loop)
             
             video_url, quality, headers, subtitles = loop.run_until_complete(
-                get_video_from_zephyrflick_player(url, preferred_lang, host)
+                get_video_from_zephyrflick_player(url, preferred_lang, host, mode)
             )
         except Exception as e:
             print(f"Error processing stream: {e}")
@@ -94,9 +94,17 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
         streams = []
         
         for stream_data in data.get('streams', []):
-            stream = process_stream_sync(stream_data, lang, host)
-            if stream:
-                streams.append(stream)
+            # Offer both delivery paths so the client can fall back:
+            #  - Direct-CDN: instant, segments straight from the CDN (needs proxyHeaders)
+            #  - Relay: goes through this addon (works even if proxyHeaders on HLS are ignored)
+            direct = process_stream_sync(stream_data, lang, host, 'direct')
+            if direct:
+                direct['title'] = f'{direct["title"]} Direct-CDN'
+                streams.append(direct)
+            relay = process_stream_sync(stream_data, lang, host, 'proxy')
+            if relay:
+                relay['title'] = f'{relay["title"]} Relay'
+                streams.append(relay)
         
         return respond_with({'streams': streams}, use_etag=False)
     except Exception as e:
