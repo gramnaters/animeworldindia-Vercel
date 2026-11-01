@@ -8,7 +8,7 @@ MANIFEST = {
     'id': 'com.skoruppa.watchanimeworld-stremio-addon',
     'version': '0.2.0',
     'name': 'Anime World India Addon',
-    'logo': 'https://watchanimeworld.top/wp-content/uploads/AWI-SiteTitle-1.png',
+    'logo': 'https://animeworld-india.vercel.app/static/logo.png',
     'description': 'Watch anime in Hindi, Tamil, Telugu & English from WatchAnimeWorld.top',
     'types': ['anime', 'series', 'movie'],
     'idPrefixes': ['tt'],
@@ -40,16 +40,22 @@ def _manifest_for_request():
     The web configuration page lets users disable the catalogs (Discover rows).
     When disabled we return a manifest without the ``catalog`` resource so
     Stremio hides the catalogs entirely; meta/stream keep working.
+
+    The addon logo is served from this deployment's own ``/static/logo.png`` so
+    it always resolves (the request host is used, or REDIRECT_URL if set).
     """
+    import os
     from flask import request
+
+    host = os.getenv('REDIRECT_URL') or request.headers.get('X-Forwarded-Host') or request.host
+    manifest = dict(MANIFEST)
+    manifest['logo'] = f'https://{host}/static/logo.png'
 
     value = (request.args.get('catalogs') or '1').strip().lower()
     if value in ('0', 'false', 'off', 'no'):
-        manifest = dict(MANIFEST)
         manifest['catalogs'] = []
         manifest['resources'] = [r for r in MANIFEST['resources'] if r != 'catalog']
-        return manifest
-    return MANIFEST
+    return manifest
 
 
 @manifest_blueprint.route('/manifest.json')
