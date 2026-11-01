@@ -154,11 +154,23 @@ def proxy_m3(path, lang=None):
 
 
 def _rewrite_m3u8_paths(content, base_url):
-    """Rewrite absolute paths in m3u8 to go through the proxy"""
+    """Rewrite paths in an m3u8.
+
+    Playlists (master/variant) always come back through this addon so they are
+    served with a proper ``application/vnd.apple.mpegurl`` content-type (mpv/
+    ffmpeg refuses to parse the CDN's ``text/plain`` playlists).
+
+    Segment URLs, however, are left ABSOLUTE by default so the player fetches
+    the actual video bytes straight from the CDN (instant, zero addon
+    bandwidth). The player sends the ``Referer`` via behaviorHints.proxyHeaders,
+    which the CDN requires. Set DIRECT_SEGMENTS=0 to relay segments too.
+    """
     host = Config.PROTOCOL + '://' + request.host
 
     def rewrite_url(url):
         if url.startswith('http'):
+            if Config.DIRECT_SEGMENTS:
+                return url
             encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip('=')
             return f'{host}/proxy/segment/{encoded}'
         if url.startswith('/m3/'):

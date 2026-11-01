@@ -31,6 +31,11 @@ class Config:
     #                       players that apply headers to sub-requests, not Stremio).
     STREAM_MODE = os.getenv('STREAM_MODE', 'proxy').lower()
 
+    # Leave HLS segment URLs pointing straight at the CDN instead of relaying
+    # every 2s chunk through the addon. This is what makes playback instant;
+    # the client must send the Referer (we expose it via proxyHeaders).
+    DIRECT_SEGMENTS = os.getenv('DIRECT_SEGMENTS', '1') in ('1', 'true', 'True', 'yes')
+
     # MediaFlow Proxy (fallback, for bypassing geo/IP blocks on scraping requests)
     SCRAPER_PROXY_URL = os.getenv('SCRAPER_PROXY_URL', '')
     SCRAPER_PROXY_PASSWORD = os.getenv('SCRAPER_PROXY_PASSWORD', '')

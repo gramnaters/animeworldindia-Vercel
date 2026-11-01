@@ -94,17 +94,12 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
         streams = []
         
         for stream_data in data.get('streams', []):
-            # Offer both delivery paths so the client can fall back:
-            #  - Direct-CDN: instant, segments straight from the CDN (needs proxyHeaders)
-            #  - Relay: goes through this addon (works even if proxyHeaders on HLS are ignored)
-            direct = process_stream_sync(stream_data, lang, host, 'direct')
-            if direct:
-                direct['title'] = f'{direct["title"]} Direct-CDN'
-                streams.append(direct)
-            relay = process_stream_sync(stream_data, lang, host, 'proxy')
-            if relay:
-                relay['title'] = f'{relay["title"]} Relay'
-                streams.append(relay)
+            # Hybrid delivery: playlists are served by this addon (proper MIME,
+            # cached) while segment URLs stay absolute -> the player pulls video
+            # straight from the CDN using the Referer in proxyHeaders.
+            stream = process_stream_sync(stream_data, lang, host, 'proxy')
+            if stream:
+                streams.append(stream)
         
         return respond_with({'streams': streams}, use_etag=False)
     except Exception as e:
