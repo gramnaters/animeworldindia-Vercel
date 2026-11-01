@@ -56,23 +56,26 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             resp.raise_for_status()
 
             data = resp.json()
-            video_url = data.get('videoSource')
+            video_source = data.get('videoSource')
+            secured_link = data.get('securedLink')
 
-            if not video_url:
+            if not video_source and not secured_link:
                 return None, None, None, []
 
-            # Delivery: by default return the upstream CDN master URL directly
-            # and let Stremio fetch variants/segments from the CDN itself (using
-            # proxyHeaders below). This is instant + zero addon bandwidth.
-            # STREAM_MODE=proxy restores the old relay-through-addon behaviour.
+            # Delivery:
+            #   proxy  -> serve the master as /hls/<token>.m3u8 via this addon
+            #             (variants also via addon; segments direct from CDN).
+            #   direct -> hand the player the CDN's tokenized master.m3u8 URL and
+            #             let it fetch everything itself (no addon in the video
+            #             path at all). The .m3u8 URL is required: the plain
+            #             master.txt is text/plain and mpv/ffmpeg detect it as tty.
             if stream_mode == 'proxy':
-                # Serve the master at a .m3u8 URL (mpv/ffmpeg need the extension
-                # to auto-detect HLS). Variants come back through this addon,
-                # segments stay absolute -> direct from the CDN.
                 proto = Config.PROTOCOL
                 prefix = f'{proto}://{host}' + (f'/{preferred_lang}' if preferred_lang else '')
-                token = base64.urlsafe_b64encode(video_url.encode()).decode().rstrip('=')
+                token = base64.urlsafe_b64encode(video_source.encode()).decode().rstrip('=')
                 video_url = f'{prefix}/hls/{token}.m3u8'
+            else:
+                video_url = secured_link or video_source
 
             # The CDN (s11.zn-grid*.top) and the master/variant playlists require
             # the player Referer (and a browser UA), otherwise segments return 403.

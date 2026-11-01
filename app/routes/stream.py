@@ -94,10 +94,9 @@ def addon_stream(content_type: str, content_id: str, lang: str = None):
         streams = []
         
         for stream_data in data.get('streams', []):
-            # Hybrid delivery: playlists are served by this addon (proper MIME,
-            # cached) while segment URLs stay absolute -> the player pulls video
-            # straight from the CDN using the Referer in proxyHeaders.
-            stream = process_stream_sync(stream_data, lang, host, 'proxy')
+            # Delivery mode comes from STREAM_MODE (proxy = hybrid via addon,
+            # direct = player fetches the CDN master itself).
+            stream = process_stream_sync(stream_data, lang, host)
             if stream:
                 streams.append(stream)
         
