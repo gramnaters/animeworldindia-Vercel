@@ -1,9 +1,15 @@
 import re
 import base64
 import requests
+from cachetools import TTLCache
 from app.routes.utils import get_random_agent
 from config import Config
 from app.resolver import get_zephyrix_base_url, invalidate_domain
+
+# Resolving the player URL (POST to play.zephyrix.org) costs a few hundred ms on
+# every /stream request. The result (CDN master URL + headers) is stable, so
+# cache it briefly to make repeat plays open instantly.
+_resolve_cache = TTLCache(maxsize=256, ttl=900)
 
 async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str = None, host: str = 'localhost'):
     """
@@ -12,6 +18,11 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
     :param preferred_lang: Preferred audio language (e.g. 'hin', 'eng', 'jpn')
     :return: tuple (video_url, quality, headers, subtitles)
     """
+    cache_key = f'{player_url}|{preferred_lang}|{host}'
+    cached = _resolve_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     for attempt in range(2):
         try:
             base_url = get_zephyrix_base_url()
@@ -101,7 +112,9 @@ async def get_video_from_zephyrflick_player(player_url: str, preferred_lang: str
             except:
                 pass
 
-            return video_url, 'auto', stream_headers, subtitles
+            result = (video_url, 'auto', stream_headers, subtitles)
+            _resolve_cache[cache_key] = result
+            return result
 
         except Exception as e:
             if attempt == 0:

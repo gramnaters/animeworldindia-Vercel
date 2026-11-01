@@ -42,6 +42,9 @@ def process_stream_sync(stream_data, preferred_lang=None, host='localhost'):
     stream_obj = {
         'title': f'[{player}][{quality}]',
         'url': video_url,
+        # Hint the container so clients (Nuvio/Stremio) don't have to guess from
+        # an extension (the CDN master is a .txt served as text/plain).
+        'type': 'hls',
         'behaviorHints': {
             'notWebReady': True
         }
