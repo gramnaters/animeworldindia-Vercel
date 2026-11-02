@@ -1,0 +1,16 @@
+name = "nuvio"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "anw-mappings"
+database_id = "70afaabe-74f6-4568-81fd-d5c21f643635"
+
+# hourly pre-warm so users never hit the ~15s first-run catalog mapping
+[triggers]
+crons = ["0 * * * *"]
+
+[observability]
+enabled = false

@@ -21,17 +21,13 @@ function copy_to_clipboard() {
 function toggleLanguageSelect() {
     const checkbox = document.getElementById('advancedCheck');
     const languageDiv = document.getElementById('languageSelectDiv');
-    const catalogDiv = document.getElementById('catalogToggleDiv');
-    
+
     if (checkbox.checked) {
         languageDiv.style.display = 'block';
-        if (catalogDiv) catalogDiv.style.display = 'block';
-        updateManifestUrl();
     } else {
         languageDiv.style.display = 'none';
-        if (catalogDiv) catalogDiv.style.display = 'none';
-        updateManifestUrl();
     }
+    updateManifestUrl();
 }
 
 function toggleTooltip(event) {

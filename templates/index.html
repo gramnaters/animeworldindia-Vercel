@@ -36,6 +36,26 @@
                 <div class="field-row">
                     <div class="field-copy">
                         <div class="label-line">
+                            <label for="catalogCheck">Show catalogs</label>
+                            <span class="info-icon" role="button" tabindex="0"
+                                  onclick="toggleTooltip(event)"
+                                  onkeydown="if(event.key==='Enter'||event.key===' '){toggleTooltip(event)}">?
+                                <span class="tooltip-text">Turn off to hide the Discover rows (Newest Drops, Most-Watched and the rest). Search, metadata and streams keep working.</span>
+                            </span>
+                        </div>
+                        <p>Hide the Discover rows if you only want search and streams.</p>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="catalogCheck" checked onchange="updateManifestUrl()" autocomplete="off">
+                        <span class="track"><span class="thumb"></span></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="field">
+                <div class="field-row">
+                    <div class="field-copy">
+                        <div class="label-line">
                             <label for="advancedCheck">Advanced audio</label>
                             <span class="info-icon" role="button" tabindex="0"
                                   onclick="toggleTooltip(event)"
@@ -63,26 +83,6 @@
                         <option value="eng" {{ 'selected' if lang == 'eng' else '' }}>English</option>
                     </select>
                     <span class="chev" aria-hidden="true"></span>
-                </div>
-            </div>
-
-            <div id="catalogToggleDiv" class="field" style="display: {{ 'block' if lang else 'none' }};">
-                <div class="field-row">
-                    <div class="field-copy">
-                        <div class="label-line">
-                            <label for="catalogCheck">Show catalogs</label>
-                            <span class="info-icon" role="button" tabindex="0"
-                                  onclick="toggleTooltip(event)"
-                                  onkeydown="if(event.key==='Enter'||event.key===' '){toggleTooltip(event)}">?
-                                <span class="tooltip-text">Turn off to hide the Discover rows (Newest Drops, Most-Watched and the rest). Search, metadata and streams keep working.</span>
-                            </span>
-                        </div>
-                        <p>Hide the Discover rows if you only want search and streams.</p>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="catalogCheck" checked onchange="updateManifestUrl()" autocomplete="off">
-                        <span class="track"><span class="thumb"></span></span>
-                    </label>
                 </div>
             </div>
 
