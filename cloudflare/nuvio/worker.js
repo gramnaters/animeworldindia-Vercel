@@ -377,23 +377,31 @@ async function getOrCreateSlugMapping(imdbId, env) {
 
 async function tmdbSearch(title, contentType, posterUrl, year, apiKey) {
   const mediaType = contentType === 'series' ? 'tv' : 'movie';
-  let url = 'https://api.themoviedb.org/3/search/' + mediaType +
-    '?api_key=' + encodeURIComponent(apiKey) + '&query=' + encodeURIComponent(title);
-  if (year) url += '&' + (mediaType === 'movie' ? 'year' : 'first_air_date_year') + '=' + encodeURIComponent(year);
-  const r = await fetch(url);
-  if (!r.ok) return null;
-  const d = await r.json();
-  const results = d.results || [];
-  if (!results.length) return null;
-  if (results.length === 1) return results[0];
-  if (posterUrl) {
-    for (const res of results) if (res.poster_path && posterUrl.includes(res.poster_path)) return res;
-    for (const res of results) {
-      const images = await tmdbImages(String(res.id), contentType, apiKey);
-      for (const p of images) if (posterUrl.includes(p)) return res;
+  const queries = [title];
+  // Retry with the trailing qualifier stripped, e.g. "Doraemon (2005)" -> "Doraemon"
+  const cleaned = title.replace(/\s*\([^)]*\)\s*$/, '').replace(/\s*\[[^\]]*\]\s*$/, '').trim();
+  if (cleaned && cleaned !== title) queries.push(cleaned);
+
+  for (const q of queries) {
+    let url = 'https://api.themoviedb.org/3/search/' + mediaType +
+      '?api_key=' + encodeURIComponent(apiKey) + '&query=' + encodeURIComponent(q);
+    if (year) url += '&' + (mediaType === 'movie' ? 'year' : 'first_air_date_year') + '=' + encodeURIComponent(year);
+    const r = await fetch(url);
+    if (!r.ok) continue;
+    const d = await r.json();
+    const results = d.results || [];
+    if (!results.length) continue;
+    if (results.length === 1) return results[0];
+    if (posterUrl) {
+      for (const res of results) if (res.poster_path && posterUrl.includes(res.poster_path)) return res;
+      for (const res of results) {
+        const images = await tmdbImages(String(res.id), contentType, apiKey);
+        for (const p of images) if (posterUrl.includes(p)) return res;
+      }
     }
+    return results[0];
   }
-  return results[0];
+  return null;
 }
 
 async function tmdbExternalId(tmdbId, contentType, apiKey) {
@@ -434,7 +442,7 @@ async function mapCatalog(items, env) {
 
 async function getHomeSections() {
   const cache = caches.default;
-  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=2');
+  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=4');
   const hit = await cache.match(key);
   if (hit) return hit.json();
   const html = await fetchHtml(BASE + '/');
@@ -511,7 +519,7 @@ async function warmCatalogs(env) {
   for (const id of Object.keys(SECTIONS)) {
     const items = sections[id] || [];
     const metas = await mapCatalog(items, env);
-    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=2');
+    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=4');
     await caches.default.put(key, json({ metas }, 200, 3600));
   }
 }
@@ -572,7 +580,7 @@ export default {
       if (m) {
         const catalogId = decodeURIComponent(m[2]);
         const searchTerm = m[3] ? decodeURIComponent(m[3]) : '';
-        const key = new Request(url.toString() + '?cv=2');
+        const key = new Request(url.toString() + '?cv=4');
         const hit = await cache.match(key);
         if (hit) return hit;
         let items;
@@ -603,7 +611,7 @@ export default {
         const metaType = m[1];
         const imdb = decodeURIComponent(m[2]);
         if (!imdb.startsWith('tt')) return json({ meta: {} });
-        const key = new Request(url.toString() + '?cv=2');
+        const key = new Request(url.toString() + '?cv=4');
         const hit = await cache.match(key);
         if (hit) return hit;
         const mapping = await getOrCreateSlugMapping(imdb, env);
@@ -629,8 +637,12 @@ export default {
             thumbnail: ep.thumbnail,
           }));
         }
-        const res = json({ meta }, 200, 86400);
-        await cache.put(key, res.clone());
+        const res = json({ meta }, 200, meta.name ? 86400 : 60);
+        // Don't cache very large metas (hundreds of episodes) - the cache write
+        // itself can blow the free-plan subrequest budget.
+        if ((meta.videos || []).length <= 200) {
+          await cache.put(key, res.clone());
+        }
         return res;
       }
 
@@ -644,7 +656,7 @@ export default {
         const season = parts.length === 3 ? parseInt(parts[1], 10) : null;
         const episode = parts.length === 3 ? parseInt(parts[2], 10) : null;
 
-        const key = new Request(url.toString() + '?cv=2');
+        const key = new Request(url.toString() + '?cv=4');
         const hit = await cache.match(key);
         if (hit) return hit;
 
