@@ -20,5 +20,3 @@ CREATE TABLE IF NOT EXISTS slug_imdb (
   content_type TEXT,
   created_at INTEGER
 );
-
-CREATE TABLE IF NOT EXISTS as_map (imdb_id TEXT PRIMARY KEY, slug TEXT, type TEXT, title TEXT, created_at INTEGER);
