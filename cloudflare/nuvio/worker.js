@@ -442,7 +442,7 @@ async function mapCatalog(items, env) {
 
 async function getHomeSections() {
   const cache = caches.default;
-  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=4');
+  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=6');
   const hit = await cache.match(key);
   if (hit) return hit.json();
   const html = await fetchHtml(BASE + '/');
@@ -458,6 +458,12 @@ async function getHomeSections() {
 
 function b64urlEncode(s) {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(s) {
+  const p = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = p.length % 4 ? '='.repeat(4 - (p.length % 4)) : '';
+  return atob(p + pad);
 }
 
 async function getVideoSource(playerUrl) {
@@ -514,12 +520,156 @@ function json(data, status = 200, maxAge = 300, swr = 0) {
   });
 }
 
+// --- AnimeSalt provider (ravok.buzz player) ---
+const AS_BASE = 'https://animesalt.cx';
+const RAVOK = 'https://ravok.buzz';
+const RAVOK_REF = 'https://ravok.buzz/';
+
+function normTitle(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+async function asSearch(title) {
+  const html = await fetchHtml(AS_BASE + '/?s=' + encodeURIComponent(title));
+  const { document } = parseHTML(html);
+  const out = [];
+  const section = document.querySelector('#aa-movies');
+  if (section) {
+    for (const li of section.querySelectorAll('ul.post-lst > li')) {
+      const a = li.querySelector('article');
+      if (!a) continue;
+      const link = a.querySelector('a.lnk-blk');
+      const t = a.querySelector('h2.entry-title');
+      if (!link || !t) continue;
+      const href = link.getAttribute('href') || '';
+      out.push({
+        title: t.textContent.trim(),
+        slug: href.replace(/\/+$/, '').split('/').pop(),
+        type: href.includes('/movies/') ? 'movie' : 'series',
+      });
+    }
+  }
+  return out;
+}
+
+function pickAsResult(results, title) {
+  const want = normTitle(title);
+  let best = results.find((r) => normTitle(r.title) === want);
+  if (!best) best = results.find((r) => normTitle(r.title).startsWith(want) || want.startsWith(normTitle(r.title)));
+  return best || results[0] || null;
+}
+
+async function asRavokId(pageUrl) {
+  const html = await fetchHtml(pageUrl);
+  const { document } = parseHTML(html);
+  for (const iframe of document.querySelectorAll('iframe')) {
+    const src = iframe.getAttribute('src') || iframe.getAttribute('data-src') || '';
+    if (src.includes('ravok.buzz/video/')) {
+      const m = src.match(/\/video\/([a-f0-9]+)/);
+      if (m) return { id: m[1], src };
+    }
+  }
+  return null;
+}
+
+async function asMaster(ravokId, src) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(RAVOK + '/player/index.php?data=' + ravokId + '&do=getVideo', {
+        method: 'POST',
+        headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', Referer: src || (RAVOK + '/video/' + ravokId) },
+      });
+      if (r.ok) {
+        const text = await r.text();
+        if (text.trim().startsWith('{')) {
+          const d = JSON.parse(text);
+          if (d.videoSource) return d.videoSource;
+        }
+      }
+    } catch (e) {
+      // retry
+    }
+    await new Promise((res) => setTimeout(res, 400));
+  }
+  return null;
+}
+
+async function asResolve(imdb, title, env) {
+  const row = await env.DB.prepare('SELECT slug, type FROM as_map WHERE imdb_id = ?').bind(imdb).first();
+  if (row && row.slug) return { slug: row.slug, type: row.type };
+  const results = await asSearch(title);
+  if (!results.length) return null;
+  const best = pickAsResult(results, title);
+  if (!best) return null;
+  await env.DB.prepare('INSERT OR REPLACE INTO as_map (imdb_id, slug, type, title, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(imdb, best.slug, best.type, title, Date.now()).run();
+  return { slug: best.slug, type: best.type };
+}
+
+async function asStreams(imdb, season, episode, env, origin) {
+  const apiKey = env.TMDB_API_KEY;
+  if (!apiKey) return [];
+  const details = await tmdbFind(imdb, apiKey);
+  if (!details) return [];
+  const title = details.title || details.name;
+  if (!title) return [];
+
+  const hit = await asResolve(imdb, title, env);
+  if (!hit) return [];
+  const { slug, type } = hit;
+
+  const pageUrl = type === 'movie'
+    ? AS_BASE + '/movies/' + slug + '/'
+    : (season != null && episode != null
+      ? AS_BASE + '/episode/' + slug + '-' + season + 'x' + episode + '/'
+      : AS_BASE + '/series/' + slug + '/');
+
+  const ravok = await asRavokId(pageUrl);
+  if (!ravok) return [];
+  const master = await asMaster(ravok.id, ravok.src);
+  if (!master) return [];
+
+  return [{
+    title: '[animesalt][ravok]',
+    url: origin + '/as/hls/' + b64urlEncode(master),
+    type: 'hls',
+    behaviorHints: { notWebReady: true },
+  }];
+}
+
+// AnimeSalt episode list (used when the primary source lists no episodes).
+async function asEpisodeList(imdb, env) {
+  const apiKey = env.TMDB_API_KEY;
+  if (!apiKey) return [];
+  const details = await tmdbFind(imdb, apiKey);
+  if (!details) return [];
+  const title = details.title || details.name;
+  if (!title) return [];
+  const hit = await asResolve(imdb, title, env);
+  if (!hit || hit.type !== 'series') return [];
+
+  const html = await fetchHtml(AS_BASE + '/series/' + hit.slug + '/');
+  const { document } = parseHTML(html);
+  const out = [];
+  for (const a of document.querySelectorAll('article.episodes a.lnk-blk')) {
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/-(\d+)x(\d+)\/?$/);
+    if (!m) continue;
+    const season = parseInt(m[1], 10);
+    const episode = parseInt(m[2], 10);
+    if (out.some((x) => x.season === season && x.episode === episode)) continue;
+    out.push({ season, episode });
+  }
+  out.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  return out;
+}
+
 async function warmCatalogs(env) {
   const sections = await getHomeSections();
   for (const id of Object.keys(SECTIONS)) {
     const items = sections[id] || [];
     const metas = await mapCatalog(items, env);
-    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=4');
+    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=6');
     await caches.default.put(key, json({ metas }, 200, 3600));
   }
 }
@@ -580,7 +730,7 @@ export default {
       if (m) {
         const catalogId = decodeURIComponent(m[2]);
         const searchTerm = m[3] ? decodeURIComponent(m[3]) : '';
-        const key = new Request(url.toString() + '?cv=4');
+        const key = new Request(url.toString() + '?cv=6');
         const hit = await cache.match(key);
         if (hit) return hit;
         let items;
@@ -611,7 +761,7 @@ export default {
         const metaType = m[1];
         const imdb = decodeURIComponent(m[2]);
         if (!imdb.startsWith('tt')) return json({ meta: {} });
-        const key = new Request(url.toString() + '?cv=4');
+        const key = new Request(url.toString() + '?cv=6');
         const hit = await cache.match(key);
         if (hit) return hit;
         const mapping = await getOrCreateSlugMapping(imdb, env);
@@ -629,7 +779,18 @@ export default {
           runtime: details.runtime,
         };
         if (details.type === 'series') {
-          meta.videos = (details.episodes || []).map((ep) => ({
+          let eps = details.episodes || [];
+          // Primary source sometimes lists no episodes at all; borrow the list
+          // from AnimeSalt so those titles are still playable.
+          if (!eps.length) {
+            try {
+              const asEps = await asEpisodeList(imdb, env);
+              if (asEps.length) eps = asEps.map((e) => ({ season: e.season, episode: e.episode }));
+            } catch (e) {
+              // fall back to the empty list
+            }
+          }
+          meta.videos = eps.map((ep) => ({
             id: imdb + ':' + ep.season + ':' + ep.episode,
             title: ep.title || ('Episode ' + ep.episode),
             episode: ep.episode,
@@ -656,36 +817,47 @@ export default {
         const season = parts.length === 3 ? parseInt(parts[1], 10) : null;
         const episode = parts.length === 3 ? parseInt(parts[2], 10) : null;
 
-        const key = new Request(url.toString() + '?cv=4');
+        const key = new Request(url.toString() + '?cv=6');
         const hit = await cache.match(key);
         if (hit) return hit;
 
-        const mapping = await getOrCreateSlugMapping(imdb, env);
-        if (!mapping || !mapping.slug) return json({ streams: [] }, 200, 60);
-
-        let data;
-        try {
-          data = await getStreams(mapping.slug, season, episode);
-        } catch (e) {
-          // Episode page 404 (e.g. the site numbers seasons oddly) or a scrape
-          // failure: return an empty list, never a 5xx, so the client is happy.
-          return json({ streams: [] }, 200, 60);
-        }
         const streams = [];
-        for (const s of data.streams || []) {
-          if (s.player !== 'zephyrflick') continue;
-          const videoSource = await getVideoSource(s.url);
-          if (!videoSource) continue;
-          streams.push({
-            title: '[zephyrflick][auto]',
-            url: HLS_BASE + '/hls/' + b64urlEncode(videoSource) + '.m3u8',
-            type: 'hls',
-            behaviorHints: {
-              notWebReady: true,
-              proxyHeaders: { request: { Referer: PLAYER_REFERER, 'User-Agent': UA } },
-            },
-          });
+        const mapping = await getOrCreateSlugMapping(imdb, env);
+        if (mapping && mapping.slug) {
+          let data = { streams: [] };
+          try {
+            data = await getStreams(mapping.slug, season, episode);
+          } catch (e) {
+            // Episode page 404 (odd season numbering) or scrape failure - fall
+            // through to the backup provider instead of returning early.
+            data = { streams: [] };
+          }
+          for (const s of data.streams || []) {
+            if (s.player !== 'zephyrflick') continue;
+            const videoSource = await getVideoSource(s.url);
+            if (!videoSource) continue;
+            streams.push({
+              title: '[zephyrflick][auto]',
+              url: HLS_BASE + '/hls/' + b64urlEncode(videoSource) + '.m3u8',
+              type: 'hls',
+              behaviorHints: {
+                notWebReady: true,
+                proxyHeaders: { request: { Referer: PLAYER_REFERER, 'User-Agent': UA } },
+              },
+            });
+          }
         }
+
+        // Fallback provider: AnimeSalt (only when the primary has no streams)
+        if (!streams.length) {
+          try {
+            const extra = await asStreams(imdb, season, episode, env, url.origin);
+            streams.push(...extra);
+          } catch (e) {
+            // provider unavailable - leave streams empty
+          }
+        }
+
         const res = json({ streams }, 200, 600, 1800);
         await cache.put(key, res.clone());
         return res;
@@ -718,6 +890,35 @@ export default {
         const imdb = url.searchParams.get('imdb') || '';
         if (!/^tt\d+$/.test(imdb)) return json({ error: 'bad imdb' }, 400);
         return json(await getOrCreateSlugMapping(imdb, env));
+      }
+
+      // ---------- AnimeSalt playlist proxy ----------
+      let asMatch = p.match(/^\/as\/(hls|v)\/(.+)$/);
+      if (asMatch) {
+        let target;
+        try {
+          target = b64urlDecode(asMatch[2]);
+        } catch (e) {
+          return json({ error: 'bad token' }, 400);
+        }
+        if (!target.startsWith('https://ravok.buzz/')) return json({ error: 'bad target' }, 400);
+        const key = new Request(url.toString());
+        const hit = await cache.match(key);
+        if (hit) return hit;
+        const res = await fetch(target, { headers: { 'User-Agent': UA, Referer: RAVOK_REF } });
+        if (!res.ok) return json({ error: 'upstream ' + res.status }, 502);
+        let text = await res.text();
+        text = text.replace(/URI="(\/hls\/[^"]+)"/g, (_, v) => 'URI="' + url.origin + '/as/v/' + b64urlEncode(RAVOK + v) + '"');
+        text = text.replace(/^(\/hls\/\S+)$/gm, (_, v) => url.origin + '/as/v/' + b64urlEncode(RAVOK + v));
+        const out = new Response(text, {
+          headers: {
+            'Content-Type': 'application/vnd.apple.mpegurl',
+            'Cache-Control': 'public, max-age=600',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+        await cache.put(key, out.clone());
+        return out;
       }
 
       return json({ error: 'not found' }, 404);
