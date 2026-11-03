@@ -442,7 +442,7 @@ async function mapCatalog(items, env) {
 
 async function getHomeSections() {
   const cache = caches.default;
-  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=6');
+  const key = new Request('https://nuvio.gramnaters.workers.dev/__sections?cv=7');
   const hit = await cache.match(key);
   if (hit) return hit.json();
   const html = await fetchHtml(BASE + '/');
@@ -487,7 +487,7 @@ const HLS_BASE = 'https://anw.gramnaters.workers.dev';
 
 const MANIFEST = {
   id: 'com.skoruppa.watchanimeworld-stremio-addon',
-  version: '0.2.0',
+  version: '0.3.0',
   name: 'Anime World India Addon',
   logo: 'https://nuvio.gramnaters.workers.dev/static/logo.png',
   description: 'Watch anime in Hindi, Tamil, Telugu & English from WatchAnimeWorld.top',
@@ -530,33 +530,65 @@ function normTitle(s) {
 }
 
 async function asSearch(title) {
-  const html = await fetchHtml(AS_BASE + '/?s=' + encodeURIComponent(title));
-  const { document } = parseHTML(html);
-  const out = [];
-  const section = document.querySelector('#aa-movies');
-  if (section) {
-    for (const li of section.querySelectorAll('ul.post-lst > li')) {
-      const a = li.querySelector('article');
-      if (!a) continue;
-      const link = a.querySelector('a.lnk-blk');
-      const t = a.querySelector('h2.entry-title');
-      if (!link || !t) continue;
-      const href = link.getAttribute('href') || '';
-      out.push({
-        title: t.textContent.trim(),
-        slug: href.replace(/\/+$/, '').split('/').pop(),
-        type: href.includes('/movies/') ? 'movie' : 'series',
-      });
+  const queries = [];
+  const add = (t) => {
+    t = (t || '').replace(/\s+/g, ' ').trim();
+    if (t && !queries.includes(t)) queries.push(t);
+  };
+  add(title);
+  add(title.replace(/[^\p{L}\p{N}\s]/gu, ' '));
+  add(title.split(/[:–—]/)[0]);
+
+  let first = [];
+  for (const q of queries) {
+    let out = [];
+    try {
+      const html = await fetchHtml(AS_BASE + '/?s=' + encodeURIComponent(q));
+      const { document } = parseHTML(html);
+      const section = document.querySelector('#aa-movies');
+      if (section) {
+        for (const li of section.querySelectorAll('ul.post-lst > li')) {
+          const a = li.querySelector('article');
+          if (!a) continue;
+          const link = a.querySelector('a.lnk-blk');
+          const t = a.querySelector('h2.entry-title');
+          if (!link || !t) continue;
+          const href = link.getAttribute('href') || '';
+          out.push({
+            title: t.textContent.trim(),
+            slug: href.replace(/\/+$/, '').split('/').pop(),
+            type: href.includes('/movies/') ? 'movie' : 'series',
+          });
+        }
+      }
+    } catch (e) {
+      out = [];
     }
+    if (!first.length) first = out;
+    if (out.length) return out;
   }
-  return out;
+  return first;
 }
 
-function pickAsResult(results, title) {
+function pickAsResult(results, title, wantType) {
+  if (!results.length) return null;
+  const wantTokens = new Set(normTitle(title).split(' ').filter(Boolean));
   const want = normTitle(title);
-  let best = results.find((r) => normTitle(r.title) === want);
-  if (!best) best = results.find((r) => normTitle(r.title).startsWith(want) || want.startsWith(normTitle(r.title)));
-  return best || results[0] || null;
+  let best = null;
+  let bestScore = -1;
+  for (const r of results) {
+    const cand = new Set(normTitle(r.title).split(' ').filter(Boolean));
+    let overlap = 0;
+    for (const t of wantTokens) if (cand.has(t)) overlap++;
+    let score = overlap / Math.max(wantTokens.size, cand.size, 1);
+    if (normTitle(r.title) === want) score += 1;
+    if (wantType && r.type === wantType) score += 0.3;
+    if (score > bestScore) {
+      bestScore = score;
+      best = r;
+    }
+  }
+  return best;
 }
 
 async function asRavokId(pageUrl) {
@@ -589,66 +621,64 @@ async function asMaster(ravokId, src) {
     } catch (e) {
       // retry
     }
-    await new Promise((res) => setTimeout(res, 400));
+    if (attempt < 3) await new Promise((res) => setTimeout(res, 300));
   }
   return null;
 }
 
-async function asResolve(imdb, title, env) {
-  const row = await env.DB.prepare('SELECT slug, type FROM as_map WHERE imdb_id = ?').bind(imdb).first();
-  if (row && row.slug) return { slug: row.slug, type: row.type };
+async function asResolve(imdb, title, env, wantType) {
+  const row = await asMapRow(imdb, env, wantType);
+  if (row) return row;
   const results = await asSearch(title);
   if (!results.length) return null;
-  const best = pickAsResult(results, title);
+  const best = pickAsResult(results, title, wantType);
   if (!best) return null;
-  await env.DB.prepare('INSERT OR REPLACE INTO as_map (imdb_id, slug, type, title, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(imdb, best.slug, best.type, title, Date.now()).run();
+  await asSaveMap(imdb, best.slug, best.type, env);
   return { slug: best.slug, type: best.type };
 }
 
-async function asStreams(imdb, season, episode, env, origin) {
-  const apiKey = env.TMDB_API_KEY;
-  if (!apiKey) return [];
-  const details = await tmdbFind(imdb, apiKey);
-  if (!details) return [];
-  const title = details.title || details.name;
-  if (!title) return [];
-
-  const hit = await asResolve(imdb, title, env);
-  if (!hit) return [];
-  const { slug, type } = hit;
-
-  const pageUrl = type === 'movie'
-    ? AS_BASE + '/movies/' + slug + '/'
-    : (season != null && episode != null
-      ? AS_BASE + '/episode/' + slug + '-' + season + 'x' + episode + '/'
-      : AS_BASE + '/series/' + slug + '/');
-
-  const ravok = await asRavokId(pageUrl);
-  if (!ravok) return [];
-  const master = await asMaster(ravok.id, ravok.src);
-  if (!master) return [];
-
-  return [{
-    title: '[animesalt][ravok]',
-    url: origin + '/as/hls/' + b64urlEncode(master),
-    type: 'hls',
-    behaviorHints: { notWebReady: true },
-  }];
+function asPageUrl(slug, type, season, episode) {
+  if (type === 'movie') return AS_BASE + '/movies/' + slug + '/';
+  if (season != null && episode != null) return AS_BASE + '/episode/' + slug + '-' + season + 'x' + episode + '/';
+  return AS_BASE + '/series/' + slug + '/';
 }
 
-// AnimeSalt episode list (used when the primary source lists no episodes).
-async function asEpisodeList(imdb, env) {
-  const apiKey = env.TMDB_API_KEY;
-  if (!apiKey) return [];
-  const details = await tmdbFind(imdb, apiKey);
-  if (!details) return [];
-  const title = details.title || details.name;
-  if (!title) return [];
-  const hit = await asResolve(imdb, title, env);
-  if (!hit || hit.type !== 'series') return [];
+async function asMapRow(imdb, env, wantType) {
+  try {
+    const row = await env.DB.prepare('SELECT slug, type FROM as_map WHERE imdb_id = ?').bind(imdb).first();
+    if (!row || !row.slug) return null;
+    if (wantType && row.type && row.type !== wantType) return null;
+    return { slug: row.slug, type: row.type || wantType };
+  } catch (e) {
+    return null;
+  }
+}
 
-  const html = await fetchHtml(AS_BASE + '/series/' + hit.slug + '/');
+async function asSaveMap(imdb, slug, type, env) {
+  try {
+    await env.DB.prepare('INSERT OR REPLACE INTO as_map (imdb_id, slug, type, title, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(imdb, slug, type, '', Date.now()).run();
+  } catch (e) {
+    // best effort
+  }
+}
+
+// Episode list for an AnimeSalt series, cached for an hour. Shared by /meta
+// (to build the episode list) and /stream (to decide whether AnimeSalt is
+// worth querying for this episode at all).
+async function asSeriesEpisodes(slug) {
+  const cache = caches.default;
+  const key = new Request('https://nuvio.gramnaters.workers.dev/__aseps?slug=' + encodeURIComponent(slug) + '&cv=1');
+  const hit = await cache.match(key);
+  if (hit) {
+    try {
+      const d = await hit.json();
+      if (Array.isArray(d.eps)) return d.eps;
+    } catch (e) {
+      // fall through to a fresh scrape
+    }
+  }
+  const html = await fetchHtml(AS_BASE + '/series/' + slug + '/');
   const { document } = parseHTML(html);
   const out = [];
   for (const a of document.querySelectorAll('article.episodes a.lnk-blk')) {
@@ -657,11 +687,177 @@ async function asEpisodeList(imdb, env) {
     if (!m) continue;
     const season = parseInt(m[1], 10);
     const episode = parseInt(m[2], 10);
-    if (out.some((x) => x.season === season && x.episode === episode)) continue;
-    out.push({ season, episode });
+    if (out.some((x) => x[0] === season && x[1] === episode)) continue;
+    out.push([season, episode]);
   }
-  out.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  await cache.put(key, json({ eps: out }, 200, 3600));
   return out;
+}
+
+async function asEpisodeList(imdb, primarySlug, env) {
+  let asSlug = null;
+  const row = await asMapRow(imdb, env, 'series');
+  if (row) asSlug = row.slug;
+
+  if (asSlug) {
+    try {
+      const eps = await asSeriesEpisodes(asSlug);
+      if (eps.length) return eps.map(([season, episode]) => ({ season, episode }));
+    } catch (e) {
+      // fall through
+    }
+  }
+
+  // Same CMS family: the slug is usually identical on both sites.
+  if (primarySlug && primarySlug !== asSlug) {
+    try {
+      const eps = await asSeriesEpisodes(primarySlug);
+      if (eps.length) {
+        await asSaveMap(imdb, primarySlug, 'series', env);
+        return eps.map(([season, episode]) => ({ season, episode }));
+      }
+    } catch (e) {
+      // fall through
+    }
+  }
+
+  const apiKey = env.TMDB_API_KEY;
+  if (!apiKey) return [];
+  const details = await tmdbFind(imdb, apiKey);
+  if (!details) return [];
+  const title = details.title || details.name;
+  if (!title) return [];
+  const results = await asSearch(title);
+  const best = pickAsResult(results, title, 'series');
+  if (!best || best.type !== 'series') return [];
+  try {
+    const eps = await asSeriesEpisodes(best.slug);
+    if (eps.length) await asSaveMap(imdb, best.slug, 'series', env);
+    return eps.map(([season, episode]) => ({ season, episode }));
+  } catch (e) {
+    return [];
+  }
+}
+
+// ---------- stream providers ----------
+// Each provider resolves independently and returns raw entries:
+//   { player, url, referer }
+// Callers label them and run them in parallel (see /stream).
+
+const PROVIDERS = {
+  animeworld: { key: 'animeworld', label: 'ANIME WORLD', site: 'watchanimeworld', timeout: 9000 },
+  animesalt: { key: 'animesalt', label: 'ANIME SALT', site: 'animesalt', timeout: 20000 },
+};
+
+async function provWatchAnimeWorld(slug, season, episode) {
+  const data = await getStreams(slug, season, episode);
+  const out = [];
+  for (const s of data.streams || []) {
+    if (s.player !== 'zephyrflick') continue;
+    const videoSource = await getVideoSource(s.url);
+    if (!videoSource) continue;
+    out.push({
+      player: 'zephyrflick',
+      url: HLS_BASE + '/hls/' + b64urlEncode(videoSource) + '.m3u8',
+      referer: PLAYER_REFERER,
+    });
+  }
+  return out;
+}
+
+async function provAnimeSalt(imdb, season, episode, env, origin, primarySlug) {
+  const wantType = (season != null && episode != null) ? 'series' : 'movie';
+
+  const candidates = [];
+  const row = await asMapRow(imdb, env, wantType);
+  if (row) candidates.push(row);
+  if (primarySlug && !candidates.some((c) => c.slug === primarySlug)) {
+    candidates.push({ slug: primarySlug, type: wantType });
+  }
+
+  let ravok = null;
+  let used = null;
+  for (const cand of candidates) {
+    try {
+      ravok = await asRavokId(asPageUrl(cand.slug, cand.type, season, episode));
+    } catch (e) {
+      ravok = null;
+    }
+    if (ravok) {
+      used = cand;
+      break;
+    }
+  }
+
+  // Last resort: site search by title.
+  if (!ravok) {
+    const apiKey = env.TMDB_API_KEY;
+    if (!apiKey) return [];
+    const details = await tmdbFind(imdb, apiKey);
+    const title = details && (details.title || details.name);
+    if (!title) return [];
+    const results = await asSearch(title);
+    const best = pickAsResult(results, title, wantType);
+    if (best) {
+      try {
+        ravok = await asRavokId(asPageUrl(best.slug, best.type, season, episode));
+      } catch (e) {
+        ravok = null;
+      }
+      if (ravok) used = best;
+    }
+  }
+  if (!ravok) return [];
+
+  if (used && (!row || row.slug !== used.slug)) await asSaveMap(imdb, used.slug, used.type, env);
+
+  const master = await asMaster(ravok.id, ravok.src);
+  if (!master) return [];
+
+  return [{ player: 'ravok', url: origin + '/as/hls/' + b64urlEncode(master), referer: null }];
+}
+
+// Cheap pre-check: does AnimeSalt even list this episode? Avoids paying for a
+// doomed scrape on the ~2.5k episodes only the primary site carries.
+async function asCanServe(imdb, season, episode, env) {
+  let row = null;
+  try {
+    row = await env.DB.prepare('SELECT slug, type FROM as_map WHERE imdb_id = ?').bind(imdb).first();
+  } catch (e) {
+    return true;
+  }
+  if (!row || !row.slug) return true;
+  if (row.type === 'movie' || season == null || episode == null) return true;
+  try {
+    const eps = await asSeriesEpisodes(row.slug);
+    if (!eps.length) return true;
+    return eps.some((x) => x[0] === season && x[1] === episode);
+  } catch (e) {
+    return true;
+  }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout after ' + ms + 'ms')), ms)),
+  ]);
+}
+
+function labelStreams(provider, entries, ctx) {
+  return entries.map((e, i) => {
+    const hint = {
+      bingeGroup: provider.key + '|' + e.player,
+      notWebReady: true,
+    };
+    if (ctx.filename) hint.filename = ctx.filename + '.' + provider.key + '.mkv';
+    if (e.referer) hint.proxyHeaders = { request: { Referer: e.referer, 'User-Agent': UA } };
+    const desc = entries.length > 1
+      ? provider.site + ' #' + (i + 1) + '\n' + e.player
+      : provider.site + '\n' + e.player;
+    return { name: provider.label, description: desc, url: e.url, behaviorHints: hint };
+  });
 }
 
 async function warmCatalogs(env) {
@@ -669,7 +865,7 @@ async function warmCatalogs(env) {
   for (const id of Object.keys(SECTIONS)) {
     const items = sections[id] || [];
     const metas = await mapCatalog(items, env);
-    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=6');
+    const key = new Request('https://nuvio.gramnaters.workers.dev/catalog/anime/' + id + '.json?cv=7');
     await caches.default.put(key, json({ metas }, 200, 3600));
   }
 }
@@ -730,7 +926,7 @@ export default {
       if (m) {
         const catalogId = decodeURIComponent(m[2]);
         const searchTerm = m[3] ? decodeURIComponent(m[3]) : '';
-        const key = new Request(url.toString() + '?cv=6');
+        const key = new Request(url.toString() + '?cv=7');
         const hit = await cache.match(key);
         if (hit) return hit;
         let items;
@@ -761,7 +957,7 @@ export default {
         const metaType = m[1];
         const imdb = decodeURIComponent(m[2]);
         if (!imdb.startsWith('tt')) return json({ meta: {} });
-        const key = new Request(url.toString() + '?cv=6');
+        const key = new Request(url.toString() + '?cv=7');
         const hit = await cache.match(key);
         if (hit) return hit;
         const mapping = await getOrCreateSlugMapping(imdb, env);
@@ -779,17 +975,25 @@ export default {
           runtime: details.runtime,
         };
         if (details.type === 'series') {
-          let eps = details.episodes || [];
-          // Primary source sometimes lists no episodes at all; borrow the list
-          // from AnimeSalt so those titles are still playable.
-          if (!eps.length) {
-            try {
-              const asEps = await asEpisodeList(imdb, env);
-              if (asEps.length) eps = asEps.map((e) => ({ season: e.season, episode: e.episode }));
-            } catch (e) {
-              // fall back to the empty list
+          let eps = (details.episodes || []).slice();
+          // Episode list = primary list, topped up from AnimeSalt when it
+          // carries more episodes (weekly shows the primary hasn't caught up
+          // with, or titles the primary lists as empty). Only top up when the
+          // AnimeSalt list is the longer one: its episodes are always numbered
+          // from season 1, so merging a shorter list would invent episodes.
+          try {
+            const asEps = await asEpisodeList(imdb, mapping.slug, env);
+            if (asEps.length >= eps.length) {
+              for (const e of asEps) {
+                if (!eps.some((x) => x.season === e.season && x.episode === e.episode)) {
+                  eps.push({ season: e.season, episode: e.episode });
+                }
+              }
             }
+          } catch (e) {
+            // keep the primary list
           }
+          eps.sort((a, b) => (a.season || 0) - (b.season || 0) || (a.episode || 0) - (b.episode || 0));
           meta.videos = eps.map((ep) => ({
             id: imdb + ':' + ep.season + ':' + ep.episode,
             title: ep.title || ('Episode ' + ep.episode),
@@ -817,48 +1021,41 @@ export default {
         const season = parts.length === 3 ? parseInt(parts[1], 10) : null;
         const episode = parts.length === 3 ? parseInt(parts[2], 10) : null;
 
-        const key = new Request(url.toString() + '?cv=6');
+        const key = new Request(url.toString() + '?cv=7');
         const hit = await cache.match(key);
         if (hit) return hit;
 
-        const streams = [];
         const mapping = await getOrCreateSlugMapping(imdb, env);
-        if (mapping && mapping.slug) {
-          let data = { streams: [] };
-          try {
-            data = await getStreams(mapping.slug, season, episode);
-          } catch (e) {
-            // Episode page 404 (odd season numbering) or scrape failure - fall
-            // through to the backup provider instead of returning early.
-            data = { streams: [] };
-          }
-          for (const s of data.streams || []) {
-            if (s.player !== 'zephyrflick') continue;
-            const videoSource = await getVideoSource(s.url);
-            if (!videoSource) continue;
-            streams.push({
-              title: '[zephyrflick][auto]',
-              url: HLS_BASE + '/hls/' + b64urlEncode(videoSource) + '.m3u8',
-              type: 'hls',
-              behaviorHints: {
-                notWebReady: true,
-                proxyHeaders: { request: { Referer: PLAYER_REFERER, 'User-Agent': UA } },
-              },
-            });
+        const base = (mapping && mapping.slug) ? mapping.slug : imdb;
+        const ctx = {
+          filename: season != null && episode != null
+            ? base + '.S' + String(season).padStart(2, '0') + 'E' + String(episode).padStart(2, '0')
+            : base,
+        };
+
+        // Both providers resolve in parallel; each success becomes its own
+        // labelled stream so the viewer picks the site.
+        const primaryJob = (mapping && mapping.slug)
+          ? withTimeout(provWatchAnimeWorld(mapping.slug, season, episode), PROVIDERS.animeworld.timeout)
+          : Promise.resolve([]);
+        const saltJob = (async () => {
+          if (!(await asCanServe(imdb, season, episode, env))) return [];
+          return withTimeout(provAnimeSalt(imdb, season, episode, env, url.origin, mapping && mapping.slug), PROVIDERS.animesalt.timeout);
+        })();
+        const [primaryRes, saltRes] = await Promise.allSettled([primaryJob, saltJob]);
+
+        const streams = [];
+        for (const [provider, res] of [[PROVIDERS.animeworld, primaryRes], [PROVIDERS.animesalt, saltRes]]) {
+          if (res.status === 'fulfilled' && res.value.length) {
+            streams.push(...labelStreams(provider, res.value, ctx));
           }
         }
 
-        // Fallback provider: AnimeSalt (only when the primary has no streams)
-        if (!streams.length) {
-          try {
-            const extra = await asStreams(imdb, season, episode, env, url.origin);
-            streams.push(...extra);
-          } catch (e) {
-            // provider unavailable - leave streams empty
-          }
-        }
-
-        const res = json({ streams }, 200, 600, 1800);
+        // Shorter cache when a provider failed, so a bad scrape doesn't stick.
+        const anyFailed = primaryRes.status === 'rejected' || saltRes.status === 'rejected';
+        const res = anyFailed
+          ? json({ streams }, 200, 120, 300)
+          : json({ streams }, 200, 900, 1800);
         await cache.put(key, res.clone());
         return res;
       }
